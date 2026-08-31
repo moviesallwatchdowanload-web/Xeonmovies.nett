@@ -96,12 +96,11 @@ function showToast(msg = "Download start in files") {
 }
 
 window.downloadOfficialApp = function() {
-  const appUrl = "#"; 
-  showToast("Download start in files, check notification");
+  const appUrl = "https://moviesallwatchdowanload-web.github.io/Xeonmovies/"; 
+  showToast("Opening download link...");
   if(appUrl && appUrl !== "#") {
     const a = document.createElement('a');
     a.href = appUrl;
-    a.download = "XeonMovies.apk";
     a.target = '_blank';
     document.body.appendChild(a);
     a.click();
@@ -1506,40 +1505,6 @@ function render() {
           <span class="text-xs font-black text-white tracking-wide truncate max-w-[150px]">${esc(displayHeaderTitle)}</span>
           <div class="items-center gap-2.5 flex relative">
             
-            <div class="relative">
-              <button onclick="window.toggleLanguageMenu()" class="text-amber-400 font-bold text-[11px] bg-amber-500/10 border border-amber-500/30 px-2 py-1 rounded-lg flex items-center gap-1 transition">
-                <i class="fa-solid fa-globe text-[9px]"></i> ${esc(selectedLanguage)}
-              </button>
-
-              ${isLanguageMenuOpen ? `
-                <div class="absolute right-0 top-10 bg-[#121826] border border-white/15 rounded-xl shadow-2xl py-2 z-50 min-w-[130px] backdrop-blur-xl">
-                  <div class="px-3 py-1 text-[10px] font-bold text-slate-400 border-b border-white/10 mb-1">Audio / Language</div>
-                  ${availableLangs.map(lang => `
-                    <div onclick="window.setPlayerLanguage('${esc(lang)}')" class="px-4 py-2 text-xs text-white hover:bg-cyan-500/20 cursor-pointer transition flex items-center justify-between ${selectedLanguage === lang ? 'text-cyan-400 font-black bg-cyan-500/10' : ''}">
-                      <span>${esc(lang)}</span> ${selectedLanguage === lang ? '<i class="fa-solid fa-check text-[10px]"></i>' : ''}
-                    </div>
-                  `).join('')}
-                </div>
-              ` : ''}
-            </div>
-
-            <div class="relative">
-              <button onclick="window.toggleQualityMenu()" class="text-cyan-400 font-black text-[11px] bg-cyan-500/10 border border-cyan-500/30 px-2.5 py-1 rounded-lg flex items-center gap-1 transition">
-                <i class="fa-solid fa-sliders text-[9px]"></i> ${esc(selectedQuality || '1080p')}
-              </button>
-
-              ${isQualityMenuOpen ? `
-                <div class="absolute right-0 top-10 bg-[#121826] border border-white/15 rounded-xl shadow-2xl py-2 z-50 min-w-[140px] backdrop-blur-xl">
-                  <div class="px-3 py-1 text-[10px] font-bold text-slate-400 border-b border-white/10 mb-1">Select Quality</div>
-                  ${availableQualitiesKeys.length > 0 ? availableQualitiesKeys.map(qKey => `
-                    <div onclick="window.setPlayerQuality('${esc(qKey)}')" class="px-4 py-2 text-xs text-white hover:bg-cyan-500/20 cursor-pointer transition flex items-center justify-between ${selectedQuality === qKey ? 'text-cyan-400 font-black bg-cyan-500/10' : ''}">
-                      <span>${esc(qKey)}</span> ${selectedQuality === qKey ? '<i class="fa-solid fa-check text-[10px]"></i>' : ''}
-                    </div>
-                  `).join('') : '<div class="px-4 py-2 text-[11px] text-slate-500">No qualities available</div>'}
-                </div>
-              ` : ''}
-            </div>
-
             <button onclick="window.toggleVideoFullscreen()" class="text-white/80 px-1" title="Fullscreen"><i class="fa-solid fa-expand text-xs"></i></button>
 
           </div>
@@ -1570,7 +1535,6 @@ function render() {
             <span class="text-amber-400 font-bold flex items-center gap-1"><i class="fa-solid fa-star text-[10px]"></i> ${esc(selectedEpisode.rating)}</span>
             <span class="text-slate-300 font-bold">${esc(selectedEpisode.year)}</span>
             ${selectedEpisode.type === 'series' ? `<span class="text-slate-400">Season ${esc(selectedEpisode.seasonName?.replace('season_', ''))} E${esc(selectedEpisode.episodeNumber)}</span>` : '<span class="text-slate-400">Movie</span>'}
-            <span class="text-cyan-400 bg-cyan-500/10 px-2 py-0.5 rounded border border-cyan-500/20 font-bold">Lang: ${esc(selectedLanguage)}</span>
           </div>
 
           <div class="flex items-center justify-between mb-4">
