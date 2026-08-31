@@ -1,0 +1,1652 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>XeonMovies - Movies & Webseries</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.2/css/all.min.css">
+  <style>
+    ::-webkit-scrollbar { display: none; }
+    html, body { margin: 0; padding: 0; width: 100%; min-height: 100%; background: #0b0f19; color: white; overflow-x: hidden; }
+    body { -ms-overflow-style: none; scrollbar-width: none; }
+    button, input { -webkit-tap-highlight-color: transparent; }
+    video { background: #000; }
+    @media (min-width: 768px) { .tablet-max-w { max-width: 900px; margin-left: auto; margin-right: auto; } }
+    @media (min-width: 1024px) { .tablet-max-w { max-width: 1100px; } }
+  </style>
+</head>
+<body class="bg-[#0b0f19] text-white antialiased">
+
+<div id="app" class="w-full min-h-screen pb-32 tablet-max-w"></div>
+
+<nav class="fixed bottom-0 left-0 right-0 z-40 bg-[#121826]/95 backdrop-blur-xl border-t border-white/5 shadow-2xl">
+  <div id="bottomNav" class="w-full grid grid-cols-4 py-3 items-center max-w-xl mx-auto md:max-w-3xl"></div>
+</nav>
+
+<!-- Custom Toast Notification Container -->
+<div id="toastContainer" class="fixed top-5 left-1/2 -translate-x-1/2 z-50 pointer-events-none transition-all duration-300 opacity-0 transform -translate-y-4">
+  <div class="bg-blue-600 text-white px-5 py-3 rounded-2xl shadow-2xl shadow-blue-500/50 flex items-center gap-2.5 border border-blue-400/30 backdrop-blur-md">
+    <i class="fa-solid fa-circle-check text-sm"></i>
+    <span id="toastMessage" class="text-xs font-bold tracking-wide">Download start in files</span>
+  </div>
+</div>
+
+<script type="module">
+import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
+import { getAuth, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
+import { getDatabase, ref, onValue } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-database.js";
+
+const firebaseConfig = {
+  apiKey: "AIzaSyAUiYFj6vdvXZIPVRDwyWJWtXjSbJCOb4c",
+  authDomain: "movieapp-c588f.firebaseapp.com",
+  databaseURL: "https://movieapp-c588f-default-rtdb.firebaseio.com",
+  projectId: "movieapp-c588f",
+  storageBucket: "movieapp-c588f.appspot.com",
+  messagingSenderId: "471447308",
+  appId: "1:471447308:web:779b5c9087e9e7ae127b29"
+};
+
+const firebaseApp = initializeApp(firebaseConfig);
+const auth = getAuth(firebaseApp);
+const db = getDatabase(firebaseApp);
+
+let movies = {}, webseries = {}, categories = {}, banners = {}, platforms = {};
+let currentUser = null, currentPage = "home";
+let currentMovieId = null, currentSeriesId = null, currentPlatformId = null;
+let heroIndex = 0, isInitialLoaded = false;
+let touchStartX = 0, touchEndX = 0;
+let autoSlideInterval = null;
+let detailAutoPlayTimer = null;
+let searchQuery = "";
+let selectedQuality = ""; 
+let selectedLanguage = ""; 
+let isLanguageMenuOpen = false;
+let animeSubTab = "movies"; 
+let platformSubTab = "Movies"; 
+let profileSubTab = "mylist"; 
+let selectedGenre = "All";
+
+let savedItems = JSON.parse(localStorage.getItem("xeon_saved_items") || "[]");
+let likedItems = JSON.parse(localStorage.getItem("xeon_liked_items") || "[]");
+let watchHistory = JSON.parse(localStorage.getItem("xeon_watch_history") || "[]");
+let downloadedItems = JSON.parse(localStorage.getItem("xeon_downloaded_items") || "[]");
+
+let selectedSeasonKey = null; 
+let isPlaybackSettingsOpen = false;
+let isWatchSeasonDropdownOpen = false;
+let isQualityMenuOpen = false; 
+let currentPlaybackSpeed = 1.0;
+let selectedEpisode = { id: "", type: "movie", title: "", episodeNumber: 1, seasonName: "Movie", videoUrl: "", posterUrl: "", rating: "8.0", year: "2025" };
+
+const appEl = document.getElementById("app");
+const bottomNavEl = document.getElementById("bottomNav");
+
+function showToast(msg = "Download start in files") {
+  const toast = document.getElementById("toastContainer");
+  const msgEl = document.getElementById("toastMessage");
+  if (!toast) return;
+  if (msgEl) msgEl.innerText = msg;
+  toast.classList.remove("opacity-0", "-translate-y-4");
+  toast.classList.add("opacity-100", "translate-y-0");
+  setTimeout(() => {
+    toast.classList.remove("opacity-100", "translate-y-0");
+    toast.classList.add("opacity-0", "-translate-y-4");
+  }, 3000);
+}
+
+window.downloadOfficialApp = function() {
+  const appUrl = "#"; 
+  showToast("Download start in files, check notification");
+  if(appUrl && appUrl !== "#") {
+    const a = document.createElement('a');
+    a.href = appUrl;
+    a.download = "XeonMovies.apk";
+    a.target = '_blank';
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+  }
+};
+
+function esc(value) {
+  return String(value ?? "").replace(/[&<>"']/g, char => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#039;" }[char]));
+}
+
+function getAnyUrl(obj) {
+  if (!obj) return "";
+  if (typeof obj === "string") return obj;
+  return obj.watchUrl || obj.link || obj.url || obj.videoUrl || obj.downloadUrl || obj.file || obj.source || obj.mediaUrl || obj.video || obj.mp4 || obj.src || obj.streamUrl || obj.epUrl || "";
+}
+
+function getTrailerUrl(obj) {
+  if (!obj) return "";
+  return obj.trailerUrl || obj.trailer || obj.previewUrl || obj.teaserUrl || getAnyUrl(obj);
+}
+
+function getAvailableLanguages(targetNode) {
+  if (!targetNode) return ["Hindi"];
+  let langs = [];
+
+  if (targetNode.languages && typeof targetNode.languages === "object" && !Array.isArray(targetNode.languages)) {
+    Object.keys(targetNode.languages).forEach(l => {
+      if (l && targetNode.languages[l]) langs.push(String(l));
+    });
+  }
+
+  if (langs.length === 0) {
+    const standardLangs = ["Hindi", "English", "Japanese", "Tamil", "Telugu", "Korean", "Spanish", "Default"];
+    standardLangs.forEach(sl => {
+      if (targetNode[sl.toLowerCase()] || targetNode[sl]) {
+        langs.push(sl);
+      }
+    });
+  }
+
+  if (langs.length === 0) {
+    langs.push("Hindi");
+  }
+
+  return Array.from(new Set(langs));
+}
+
+function getAvailableQualitiesData(targetNode, language = "") {
+  const standardOrder = ["360p", "480p", "720p", "1080p", "4K"];
+  let available = {};
+
+  if (!targetNode) return available;
+  let nodeToCheck = targetNode;
+
+  if (targetNode.languages && typeof targetNode.languages === "object") {
+    let matchedLangKey = Object.keys(targetNode.languages).find(k => k.toLowerCase() === (language || "").toLowerCase());
+    if (!matchedLangKey && Object.keys(targetNode.languages).length > 0) {
+      matchedLangKey = Object.keys(targetNode.languages)[0]; 
+    }
+    if (matchedLangKey && targetNode.languages[matchedLangKey]) {
+      nodeToCheck = targetNode.languages[matchedLangKey];
+    }
+  } else if (language && targetNode[language.toLowerCase()]) {
+    nodeToCheck = targetNode[language.toLowerCase()];
+  }
+
+  let qObj = nodeToCheck.qualities || nodeToCheck.qualityMap || nodeToCheck.resolutions;
+  if (!qObj && (nodeToCheck["720p"] || nodeToCheck["1080p"] || nodeToCheck["360p"] || nodeToCheck["480p"] || nodeToCheck["4K"])) {
+    qObj = nodeToCheck;
+  }
+
+  if (qObj && typeof qObj === "object") {
+    for (let key of standardOrder) {
+      let val = getAnyUrl(qObj[key] || qObj[key.toLowerCase()] || qObj[key.toUpperCase()]);
+      if (val && typeof val === "string" && val.trim().length > 5) {
+        available[key] = val.trim();
+      }
+    }
+  }
+
+  if (Object.keys(available).length === 0) {
+    let directUrl = getAnyUrl(nodeToCheck);
+    if (directUrl && directUrl.trim().length > 5) {
+      available["1080p"] = directUrl.trim(); 
+    } else {
+      let rootUrl = getAnyUrl(targetNode);
+      if (rootUrl && rootUrl.trim().length > 5) {
+        available["1080p"] = rootUrl.trim();
+      }
+    }
+  }
+
+  return available;
+}
+
+function resolveVideoUrl(targetNode, quality, language) {
+  let qMap = getAvailableQualitiesData(targetNode, language);
+  if (qMap[quality]) return qMap[quality];
+  let keys = Object.keys(qMap);
+  if (keys.length > 0) {
+    return qMap[keys[0]]; 
+  }
+  return getAnyUrl(targetNode);
+}
+
+function findItemUniversal(id, type) {
+  if (!id) return null;
+  if (type === 'series') {
+    if (webseries[id]) return { id, type: 'series', ...webseries[id] };
+    for (const pKey in platforms) {
+      const p = platforms[pKey];
+      if (p && p.series && p.series[id]) {
+        return { id, type: 'series', ...p.series[id] };
+      }
+    }
+    for (const sKey in webseries) {
+      if (sKey === id || webseries[sKey]?.id === id) return { id: sKey, type: 'series', ...webseries[sKey] };
+    }
+    for (const pKey in platforms) {
+      const p = platforms[pKey];
+      if (p && p.series) {
+        for (const sKey in p.series) {
+          if (sKey === id || p.series[sKey]?.id === id) return { id: sKey, type: 'series', ...p.series[sKey] };
+        }
+      }
+    }
+  } else {
+    if (movies[id]) return { id, type: 'movie', ...movies[id] };
+    for (const pKey in platforms) {
+      const p = platforms[pKey];
+      if (p) {
+        if (p.movies && p.movies[id]) return { id, type: 'movie', ...p.movies[id] };
+        if (p.anime && p.anime[id]) return { id, type: 'movie', ...p.anime[id] };
+      }
+    }
+    for (const mKey in movies) {
+      if (mKey === id || movies[mKey]?.id === id) return { id: mKey, type: 'movie', ...movies[mKey] };
+    }
+    for (const pKey in platforms) {
+      const p = platforms[pKey];
+      if (p) {
+        ['movies', 'anime'].forEach(cat => {
+          if (p[cat]) {
+            for (const subKey in p[cat]) {
+              if (subKey === id || p[cat][subKey]?.id === id) return { id: subKey, type: 'movie', ...p[cat][subKey] };
+            }
+          }
+        });
+      }
+    }
+  }
+  return null;
+}
+
+function isAnimeItem(item) {
+  if (!item) return false;
+  const genre = (item.genre || "").toLowerCase();
+  const category = (item.category || "").toLowerCase();
+  const title = (item.title || item.name || "").toLowerCase();
+  const typeField = (item.type || "").toLowerCase();
+
+  const liveActionBlacklist = [
+    "dhurandhar", "dhaurander", "money heist", "pathaan", "jawan", "animal", 
+    "stranger things", "mirzapur", "farzi", "panchayat", "asuran", "kgf", "pushpa"
+  ];
+  for (let kw of liveActionBlacklist) {
+    if (title.includes(kw)) return false;
+  }
+
+  const animeKeywords = [
+    "suzume", "solo leveling", "your name", "demon slayer", "jujutsu kaisen", 
+    "naruto", "one piece", "attack on titan", "dragon ball", "bleach", "tokyo ghoul"
+  ];
+  for (let akw of animeKeywords) {
+    if (title.includes(akw)) return true;
+  }
+
+  return genre.includes("anime") || genre.includes("animation") || category.includes("anime") || typeField.includes("anime");
+}
+
+function movieArray() {
+  let list = Object.entries(movies || {}).map(([id, movie]) => ({ id: id || "movie_" + Math.random(), type: "movie", ...(movie || {}) }));
+  Object.values(platforms || {}).forEach(p => {
+    if (p && p.movies) {
+      Object.entries(p.movies).forEach(([id, m]) => {
+        if (!list.some(x => x.id === id)) list.push({ id, type: 'movie', ...(m || {}) });
+      });
+    }
+  });
+  return list;
+}
+
+function webseriesArray() {
+  let list = Object.entries(webseries || {}).map(([id, series]) => ({ id: id || "series_" + Math.random(), type: "series", ...(series || {}) }));
+  Object.values(platforms || {}).forEach(p => {
+    if (p && p.series) {
+      Object.entries(p.series).forEach(([id, s]) => {
+        if (!list.some(x => x.id === id)) list.push({ id, type: 'series', ...(s || {}) });
+      });
+    }
+  });
+  Object.values(platforms || {}).forEach(p => {
+    if (p && p.anime) {
+      Object.entries(p.anime).forEach(([id, a]) => {
+        if (!list.some(x => x.id === id)) list.push({ id, type: a.seasons ? 'series' : 'movie', ...(a || {}) });
+      });
+    }
+  });
+  return list;
+}
+
+function nonAnimeMoviesArray() { return movieArray().filter(m => !isAnimeItem(m)); }
+function nonAnimeWebseriesArray() { return webseriesArray().filter(s => !isAnimeItem(s)); }
+function animeMoviesArray() { return movieArray().filter(m => isAnimeItem(m)); }
+function animeWebseriesArray() { return webseriesArray().filter(s => isAnimeItem(s)); }
+function categoryArray() { return Object.entries(categories || {}).map(([id, cat]) => ({ id: id, ...(cat || {}) })); }
+function platformArray() { return Object.entries(platforms || {}).map(([id, p]) => ({ id: id, ...(p || {}) })); }
+
+function bannerArray() {
+  let list = [];
+  if (banners && typeof banners === "object") {
+    list = Object.entries(banners).map(([id, b]) => {
+      if (!b) return null;
+      let poster = b.imageUrl || b.posterUrl || b.bannerUrl || "";
+      return { id: id, title: b.title || b.name || "Featured", posterUrl: poster, ...b };
+    }).filter(item => item && item.posterUrl);
+  }
+  if (list.length === 0) {
+    let extra = [...nonAnimeMoviesArray(), ...nonAnimeWebseriesArray()];
+    let existingIds = new Set(list.map(l => l.id));
+    extra.forEach(item => {
+      if (!existingIds.has(item.id)) {
+        list.push(item);
+        existingIds.add(item.id);
+      }
+    });
+  }
+  return list;
+}
+
+onValue(ref(db, "movies"), snapshot => { movies = snapshot.val() || {}; checkInitialLoad(); render(); });
+onValue(ref(db, "webseries"), snapshot => { webseries = snapshot.val() || {}; checkInitialLoad(); render(); });
+onValue(ref(db, "categories"), snapshot => { categories = snapshot.val() || {}; render(); });
+onValue(ref(db, "banners"), snapshot => { banners = snapshot.val() || {}; checkInitialLoad(); render(); });
+onValue(ref(db, "platforms"), snapshot => { platforms = snapshot.val() || {}; checkInitialLoad(); render(); });
+
+function checkInitialLoad() {
+  if (!isInitialLoaded) { isInitialLoaded = true; render(); }
+}
+
+onAuthStateChanged(auth, user => { currentUser = user || null; render(); });
+
+function startAutoSlide() {
+  if (autoSlideInterval) clearInterval(autoSlideInterval);
+  autoSlideInterval = setInterval(() => {
+    const bannersList = bannerArray();
+    if (bannersList.length > 1 && currentPage === "home") {
+      heroIndex = (heroIndex + 1) % bannersList.length;
+      updateHeroBannerDOM(bannersList);
+    }
+  }, 3500);
+}
+
+startAutoSlide();
+
+window.showPage = function(page) {
+  if (detailAutoPlayTimer) clearTimeout(detailAutoPlayTimer);
+  currentPage = page; 
+  isPlaybackSettingsOpen = false;
+  isWatchSeasonDropdownOpen = false;
+  isQualityMenuOpen = false;
+  isLanguageMenuOpen = false;
+  window.scrollTo(0, 0); 
+  render();
+};
+
+window.openProfileSub = function(sub) {
+  profileSubTab = sub;
+  currentPage = "profilesub";
+  window.scrollTo(0, 0);
+  render();
+};
+
+window.setAnimeSubTab = function(sub) { animeSubTab = sub; render(); };
+window.setGenreFilter = function(genre) { selectedGenre = genre; render(); };
+
+window.openPlatformPage = function(platformId) {
+  currentPlatformId = platformId;
+  platformSubTab = "Movies";
+  currentPage = "platform";
+  window.scrollTo(0, 0);
+  render();
+};
+
+window.setPlatformSubTab = function(sub) { platformSubTab = sub; render(); };
+
+window.goToSearchPage = function(query = "") {
+  if (detailAutoPlayTimer) clearTimeout(detailAutoPlayTimer);
+  currentPage = "search";
+  searchQuery = query;
+  window.scrollTo(0, 0);
+  render();
+};
+
+window.handleSearchInput = function(val) {
+  searchQuery = val;
+  const resultsContainer = document.getElementById("searchResultsContainer");
+  if (resultsContainer) {
+    resultsContainer.innerHTML = getSearchResultsHTML(searchQuery);
+  }
+};
+
+window.setPlayerQuality = function(quality) {
+  selectedQuality = quality;
+  isQualityMenuOpen = false;
+  isLanguageMenuOpen = false;
+  showToast(`Quality switched to ${quality}`);
+
+  let targetNode = null;
+  if (selectedEpisode.type === 'series') {
+    const series = findItemUniversal(selectedEpisode.id, 'series');
+    if (series && series.seasons && series.seasons[selectedEpisode.seasonName]) {
+      const eps = series.seasons[selectedEpisode.seasonName].episodes || {};
+      const epValues = Object.values(eps);
+      targetNode = epValues[selectedEpisode.episodeNumber - 1];
+    }
+  } else {
+    targetNode = findItemUniversal(selectedEpisode.id, 'movie');
+  }
+
+  if (targetNode) {
+    selectedEpisode.videoUrl = resolveVideoUrl(targetNode, selectedQuality, selectedLanguage);
+  }
+
+  render();
+};
+
+window.toggleQualityMenu = function() {
+  let targetNode = null;
+  if (selectedEpisode.type === 'series') {
+    const series = findItemUniversal(selectedEpisode.id, 'series');
+    if (series && series.seasons && series.seasons[selectedEpisode.seasonName]) {
+      const eps = series.seasons[selectedEpisode.seasonName].episodes || {};
+      const epValues = Object.values(eps);
+      targetNode = epValues[selectedEpisode.episodeNumber - 1];
+    }
+  } else {
+    targetNode = findItemUniversal(selectedEpisode.id, 'movie');
+  }
+
+  const qMap = getAvailableQualitiesData(targetNode, selectedLanguage);
+  const qKeys = Object.keys(qMap);
+
+  if (qKeys.length <= 1) {
+    showToast(`Current Quality: ${qKeys[0] || selectedQuality || '1080p'}`);
+    return;
+  }
+
+  isQualityMenuOpen = !isQualityMenuOpen;
+  isLanguageMenuOpen = false;
+  render();
+};
+
+window.setPlayerLanguage = function(lang) {
+  selectedLanguage = lang;
+  isLanguageMenuOpen = false;
+  isQualityMenuOpen = false;
+  showToast(`Language switched to ${lang}`);
+
+  let targetNode = null;
+  if (selectedEpisode.type === 'series') {
+    const series = findItemUniversal(selectedEpisode.id, 'series');
+    if (series && series.seasons && series.seasons[selectedEpisode.seasonName]) {
+      const eps = series.seasons[selectedEpisode.seasonName].episodes || {};
+      const epValues = Object.values(eps);
+      targetNode = epValues[selectedEpisode.episodeNumber - 1];
+    }
+  } else {
+    targetNode = findItemUniversal(selectedEpisode.id, 'movie');
+  }
+
+  if (targetNode) {
+    const qMap = getAvailableQualitiesData(targetNode, selectedLanguage);
+    const qKeys = Object.keys(qMap);
+    if (qKeys.length > 0) {
+      if (!qMap[selectedQuality]) {
+        selectedQuality = qKeys[qKeys.length - 1];
+      }
+      selectedEpisode.videoUrl = qMap[selectedQuality];
+    }
+  }
+
+  render();
+};
+
+window.toggleLanguageMenu = function() {
+  isLanguageMenuOpen = !isLanguageMenuOpen;
+  isQualityMenuOpen = false;
+  render();
+};
+
+function getSearchResultsHTML(query) {
+  const q = query.toLowerCase().trim();
+  const allItems = [...nonAnimeMoviesArray(), ...nonAnimeWebseriesArray(), ...animeMoviesArray(), ...animeWebseriesArray()];
+  const filtered = q === "" ? allItems : allItems.filter(item => (item.title || item.name || "").toLowerCase().includes(q));
+  
+  if (filtered.length === 0) {
+    return `<div class="text-center py-10 text-xs text-slate-500">No results found for "${esc(query)}"</div>`;
+  }
+  
+  return `
+    <div class="mb-3 flex items-center justify-between text-[11px] text-slate-400">
+      <span>${filtered.length} results found</span>
+    </div>
+    <div class="grid grid-cols-2 gap-3">
+      ${filtered.map(item => `
+        <div onclick="window.openDetail('${esc(item.id)}', '${esc(item.type || 'movie')}');" class="bg-slate-900 rounded-xl p-2 cursor-pointer border border-white/5 relative">
+          <img src="${esc(item.posterUrl || item.imageUrl)}" class="w-full aspect-[2/3] object-cover rounded-lg mb-2">
+          <h3 class="text-xs font-bold truncate">${esc(item.title || item.name)}</h3>
+        </div>
+      `).join('')}
+    </div>
+  `;
+}
+
+window.openBannerAction = function(bannerId, bannerTitle) {
+  let found = findItemUniversal(bannerId, 'movie') || findItemUniversal(bannerId, 'series');
+  if (found) {
+    window.openDetail(found.id, found.type);
+  } else {
+    window.goToSearchPage("");
+  }
+};
+
+window.openDetail = function(id, type) {
+  if (detailAutoPlayTimer) clearTimeout(detailAutoPlayTimer);
+  isPlaybackSettingsOpen = false;
+  isWatchSeasonDropdownOpen = false;
+  isQualityMenuOpen = false;
+  isLanguageMenuOpen = false;
+  
+  let item = findItemUniversal(id, type);
+  if (!item) {
+    item = findItemUniversal(id, type === 'series' ? 'movie' : 'series');
+  }
+
+  if (item) {
+    if (item.type === 'series') {
+      currentSeriesId = item.id; currentMovieId = null;
+      if (item.seasons) {
+        const sKeys = Object.keys(item.seasons);
+        selectedSeasonKey = sKeys[0] || null;
+      }
+    } else {
+      currentMovieId = item.id; currentSeriesId = null;
+    }
+  } else {
+    if (type === 'series') { currentSeriesId = id; currentMovieId = null; }
+    else { currentMovieId = id; currentSeriesId = null; }
+  }
+
+  currentPage = "detail";
+  window.scrollTo(0, 0);
+  render();
+
+  detailAutoPlayTimer = setTimeout(() => {
+    const posterBox = document.getElementById("detailPosterBox");
+    const videoBox = document.getElementById("detailVideoBox");
+    const videoEl = document.getElementById("detailTrailerPlayer");
+    const soundBtn = document.getElementById("trailerSoundBtn");
+    const badgeEl = document.getElementById("trailerBadge");
+
+    if (posterBox && videoBox && videoEl) {
+      posterBox.classList.add("hidden");
+      videoBox.classList.remove("hidden");
+      if (badgeEl) badgeEl.classList.remove("hidden");
+      
+      videoEl.muted = false;
+      videoEl.play().then(() => {
+        if (soundBtn) soundBtn.classList.add("hidden");
+      }).catch(() => {
+        videoEl.muted = true;
+        videoEl.play().then(() => {
+          if (soundBtn) soundBtn.classList.remove("hidden");
+        }).catch(() => {});
+      });
+    }
+  }, 3000);
+};
+
+window.unmuteTrailer = function() {
+  const videoEl = document.getElementById("detailTrailerPlayer");
+  const soundBtn = document.getElementById("trailerSoundBtn");
+  if (videoEl) {
+    videoEl.muted = false;
+    videoEl.play().catch(() => {});
+    if (soundBtn) soundBtn.classList.add("hidden");
+  }
+};
+
+window.toggleSaveItem = function(id, type, title, posterUrl) {
+  const index = savedItems.findIndex(i => i.id === id);
+  if (index > -1) { savedItems.splice(index, 1); } 
+  else { savedItems.push({ id, type, title, posterUrl }); }
+  localStorage.setItem("xeon_saved_items", JSON.stringify(savedItems));
+  render();
+};
+
+window.toggleLikeItem = function(id, type, title, posterUrl) {
+  const index = likedItems.findIndex(i => i.id === id);
+  if (index > -1) { likedItems.splice(index, 1); } 
+  else { likedItems.push({ id, type, title, posterUrl }); }
+  localStorage.setItem("xeon_liked_items", JSON.stringify(likedItems));
+  render();
+};
+
+window.handleDownload = function(id, type, title, posterUrl, videoUrl) {
+  if (!videoUrl) {
+    showToast("Download link not available!");
+    return;
+  }
+  const a = document.createElement('a');
+  a.href = videoUrl;
+  a.download = title || 'video';
+  a.target = '_blank';
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+
+  if (!downloadedItems.some(i => i.id === id && i.title === title)) {
+    downloadedItems.push({ id, type, title, posterUrl, videoUrl });
+    localStorage.setItem("xeon_downloaded_items", JSON.stringify(downloadedItems));
+  }
+  showToast("Download start in files, check notification");
+  render();
+};
+
+window.removeDownloadItem = function(id, title) {
+  downloadedItems = downloadedItems.filter(i => !(i.id === id && i.title === title));
+  localStorage.setItem("xeon_downloaded_items", JSON.stringify(downloadedItems));
+  render();
+};
+
+window.clearAllDownloads = function() {
+  if (confirm("Are you sure you want to remove all downloaded videos?")) {
+    downloadedItems = [];
+    localStorage.removeItem("xeon_downloaded_items");
+    render();
+  }
+};
+
+window.selectSeason = function(sKey) { selectedSeasonKey = sKey; render(); };
+
+window.selectWatchSeason = function(sKey) {
+  selectedEpisode.seasonName = sKey;
+  isWatchSeasonDropdownOpen = false;
+  
+  const series = findItemUniversal(selectedEpisode.id, 'series');
+  if (series && series.seasons && series.seasons[sKey] && series.seasons[sKey].episodes) {
+    const epEntries = Object.entries(series.seasons[sKey].episodes);
+    if (epEntries.length > 0) {
+      const [firstKey, firstEp] = epEntries[0];
+      const langs = getAvailableLanguages(firstEp);
+      selectedLanguage = langs[0] || "Hindi";
+      
+      const qMap = getAvailableQualitiesData(firstEp, selectedLanguage);
+      const qKeys = Object.keys(qMap);
+      if (qKeys.length > 0) {
+        selectedQuality = qKeys[qKeys.length - 1]; 
+        selectedEpisode.videoUrl = qMap[selectedQuality];
+      } else {
+        selectedEpisode.videoUrl = getAnyUrl(firstEp);
+      }
+      selectedEpisode.title = firstEp.title || "Episode 1";
+      selectedEpisode.episodeNumber = 1;
+    }
+  }
+  render();
+};
+
+window.toggleWatchSeasonDropdown = function() {
+  isWatchSeasonDropdownOpen = !isWatchSeasonDropdownOpen;
+  render();
+};
+
+window.toggleVideoFullscreen = function() {
+  const videoEl = document.getElementById("mainVideoPlayer");
+  if (!videoEl) return;
+  if (videoEl.requestFullscreen) { videoEl.requestFullscreen(); } 
+  else if (videoEl.webkitRequestFullscreen) { videoEl.webkitRequestFullscreen(); } 
+  else if (videoEl.msRequestFullscreen) { videoEl.msRequestFullscreen(); }
+};
+
+window.playSpecificEpisode = function(epNodeOrUrl, epTitle, seasonName, epNum) {
+  let targetNode = epNodeOrUrl;
+  const langs = getAvailableLanguages(targetNode);
+  selectedLanguage = langs[0] || "Hindi";
+
+  const qMap = getAvailableQualitiesData(targetNode, selectedLanguage);
+  const qKeys = Object.keys(qMap);
+  if (qKeys.length > 0) {
+    selectedQuality = qKeys[qKeys.length - 1];
+    selectedEpisode.videoUrl = qMap[selectedQuality];
+  } else {
+    selectedEpisode.videoUrl = getAnyUrl(targetNode);
+  }
+
+  selectedEpisode.title = epTitle;
+  selectedEpisode.seasonName = seasonName;
+  selectedEpisode.episodeNumber = epNum;
+  window.scrollTo(0, 0);
+  render();
+  setTimeout(() => {
+    const vPlayer = document.getElementById("mainVideoPlayer");
+    if (vPlayer) {
+      vPlayer.play().catch(() => {
+        vPlayer.muted = true;
+        vPlayer.play().catch(() => {});
+      });
+    }
+  }, 100);
+};
+
+window.playNextEpisode = function() {
+  if (selectedEpisode.type !== 'series') return;
+  const series = findItemUniversal(selectedEpisode.id, 'series');
+  if (!series || !series.seasons || !series.seasons[selectedEpisode.seasonName]) return;
+  
+  const episodesObj = series.seasons[selectedEpisode.seasonName].episodes || {};
+  const epEntries = Object.entries(episodesObj);
+  const nextIndex = selectedEpisode.episodeNumber; 
+  
+  if (nextIndex < epEntries.length) {
+    const [nextKey, nextEp] = epEntries[nextIndex];
+    window.playSpecificEpisode(nextEp, nextEp.title || `Episode ${nextIndex + 1}`, selectedEpisode.seasonName, nextIndex + 1);
+  } else {
+    showToast("You have reached the last episode of this season!");
+  }
+};
+
+window.openWatchScreen = function(id, type, episodeNode = null, epTitle = "", seasonName = "Movie", episodeNumber = 1) {
+  if (detailAutoPlayTimer) clearTimeout(detailAutoPlayTimer);
+  let mediaObj = findItemUniversal(id, type) || findItemUniversal(id, type === 'series' ? 'movie' : 'series');
+  isPlaybackSettingsOpen = false;
+  isWatchSeasonDropdownOpen = false;
+  isQualityMenuOpen = false;
+  isLanguageMenuOpen = false;
+
+  let targetNode = episodeNode;
+
+  if (type === "series" || (mediaObj && mediaObj.type === 'series') || (mediaObj && mediaObj.seasons)) {
+    currentSeriesId = id; currentMovieId = null;
+    let targetTitle = epTitle, targetSeason = seasonName, targetEpNum = episodeNumber;
+    if (mediaObj && mediaObj.seasons) {
+      const sKeys = Object.keys(mediaObj.seasons);
+      if (!selectedSeasonKey || !mediaObj.seasons[selectedSeasonKey]) {
+        selectedSeasonKey = sKeys[0] || "season_1";
+      }
+      targetSeason = selectedSeasonKey;
+      if (!targetNode) {
+        const activeSeason = mediaObj.seasons[targetSeason];
+        if (activeSeason && activeSeason.episodes) {
+          const epEntries = Object.entries(activeSeason.episodes);
+          const [firstEpKey, firstEp] = epEntries[0] || [];
+          if (firstEp) {
+            targetNode = firstEp;
+            targetTitle = firstEp.title || "Episode 1";
+            targetEpNum = 1;
+          }
+        }
+      }
+    }
+
+    const checkNode = targetNode || mediaObj;
+    const langs = getAvailableLanguages(checkNode);
+    selectedLanguage = langs[0] || "Hindi";
+
+    const qMap = getAvailableQualitiesData(checkNode, selectedLanguage);
+    const qKeys = Object.keys(qMap);
+    if (qKeys.length > 0) {
+      selectedQuality = qKeys[qKeys.length - 1]; 
+    } else {
+      selectedQuality = "1080p";
+    }
+
+    selectedEpisode = { 
+      id: id, type: 'series', 
+      title: targetTitle || (mediaObj ? mediaObj.title : "Episode 1"), 
+      episodeNumber: targetEpNum, 
+      seasonName: targetSeason, 
+      videoUrl: resolveVideoUrl(checkNode, selectedQuality, selectedLanguage), 
+      posterUrl: mediaObj?.posterUrl || mediaObj?.imageUrl || '',
+      rating: mediaObj?.rating || '6.5',
+      year: mediaObj?.year || '2019'
+    };
+  } else {
+    currentMovieId = id; currentSeriesId = null;
+    let movieNode = targetNode || mediaObj;
+
+    const langs = getAvailableLanguages(movieNode);
+    selectedLanguage = langs[0] || "Hindi";
+
+    const qMap = getAvailableQualitiesData(movieNode, selectedLanguage);
+    const qKeys = Object.keys(qMap);
+    if (qKeys.length > 0) {
+      selectedQuality = qKeys[qKeys.length - 1];
+    } else {
+      selectedQuality = "1080p";
+    }
+
+    selectedEpisode = { 
+      id: id, type: 'movie', 
+      title: mediaObj ? (mediaObj.title || mediaObj.name) : "Movie", 
+      episodeNumber: 1, 
+      seasonName: "Movie", 
+      videoUrl: resolveVideoUrl(movieNode, selectedQuality, selectedLanguage), 
+      posterUrl: mediaObj?.posterUrl || mediaObj?.imageUrl || '',
+      rating: mediaObj?.rating || '6.5',
+      year: mediaObj?.year || '2019'
+    };
+  }
+
+  if (mediaObj) {
+    const historyItem = { id: id, type: type, title: mediaObj.title || mediaObj.name, posterUrl: mediaObj.posterUrl || mediaObj.imageUrl };
+    watchHistory = [historyItem, ...watchHistory.filter(h => h.id !== id)].slice(0, 20);
+    localStorage.setItem("xeon_watch_history", JSON.stringify(watchHistory));
+  }
+
+  currentPage = "watch";
+  window.scrollTo(0, 0);
+  render();
+
+  setTimeout(() => {
+    const vPlayer = document.getElementById("mainVideoPlayer");
+    if (vPlayer) {
+      vPlayer.play().catch(() => {
+        vPlayer.muted = true;
+        vPlayer.play().catch(() => {});
+      });
+    }
+  }, 100);
+};
+
+window.handleTouchStart = function(e) { touchStartX = e.touches[0].clientX; };
+window.handleTouchMove = function(e) { touchEndX = e.touches[0].clientX; };
+window.handleTouchEnd = function() {
+  const bannersList = bannerArray();
+  if (bannersList.length <= 1) return;
+  const diff = touchStartX - touchEndX;
+  if (Math.abs(diff) > 30) {
+    if (diff > 0) { heroIndex = (heroIndex + 1) % bannersList.length; } 
+    else { heroIndex = (heroIndex - 1 + bannersList.length) % bannersList.length; }
+    updateHeroBannerDOM(bannersList);
+    startAutoSlide();
+  }
+};
+
+function updateHeroBannerDOM(bannersList) {
+  const container = document.getElementById("heroBannerContainer");
+  if (!container) return;
+  const banner = bannersList[heroIndex] || bannersList[0];
+  if (!banner) return;
+
+  const ratingVal = banner.rating || '6.5';
+  const yearVal = banner.year || '2019';
+  const safeTitle = banner.title || banner.name || 'Featured';
+
+  container.innerHTML = `
+    <div 
+      ontouchstart="window.handleTouchStart(event)" 
+      ontouchmove="window.handleTouchMove(event)" 
+      ontouchend="window.handleTouchEnd(event)"
+      class="relative w-full aspect-[16/9] bg-slate-900 overflow-hidden cursor-pointer"
+      onclick="window.openBannerAction('${esc(banner.id)}', '${esc(safeTitle)}')"
+    >
+      ${banner.posterUrl || banner.imageUrl ? `<img src="${esc(banner.posterUrl || banner.imageUrl)}" class="w-full h-full object-cover pointer-events-none">` : ``}
+      <div class="absolute inset-0 bg-gradient-to-t from-[#0b0f19] via-transparent to-black/30 flex flex-col justify-end p-5">
+        <div class="flex items-center gap-2 mb-1.5">
+          <span class="text-xs text-slate-300">${esc(yearVal)}</span>
+          <span class="text-xs text-amber-400 font-bold"><i class="fa-solid fa-star text-[10px]"></i> ${esc(ratingVal)}</span>
+        </div>
+        <h2 class="text-xl md:text-3xl font-black text-white mb-3 truncate">${esc(safeTitle)}</h2>
+        
+        <div class="flex items-center justify-between">
+          <button onclick="event.stopPropagation(); window.openBannerAction('${esc(banner.id)}', '${esc(safeTitle)}');" class="bg-gradient-to-r from-cyan-500 to-blue-600 text-white px-5 py-2.5 rounded-xl text-xs font-black uppercase tracking-wider flex items-center gap-2 shadow-lg shadow-cyan-500/30 hover:opacity-95 transition"><i class="fa-solid fa-magnifying-glass text-xs"></i> WATCH NOW</button>
+          
+          <div class="flex items-center gap-1.5">
+            ${Array.from({ length: bannersList.length }).map((_, idx) => `
+              <span class="h-1.5 rounded-full transition-all duration-300 ${idx === heroIndex ? 'w-5 bg-cyan-400' : 'w-1.5 bg-white/40'}"></span>
+            `).join("")}
+          </div>
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+function render() {
+  if (!appEl) return;
+  
+  if (bottomNavEl) {
+    bottomNavEl.innerHTML = `
+      <div onclick="window.showPage('home')" class="flex flex-col items-center justify-center cursor-pointer ${currentPage === 'home' ? 'text-cyan-400' : 'text-slate-400'}">
+        <i class="fa-solid fa-film text-lg"></i>
+        <span class="text-[10px] mt-1 font-bold">Movie/Tv</span>
+      </div>
+      <div onclick="window.showPage('anime')" class="flex flex-col items-center justify-center cursor-pointer ${currentPage === 'anime' ? 'text-cyan-400' : 'text-slate-400'}">
+        <i class="fa-solid fa-fire text-lg"></i>
+        <span class="text-[10px] mt-1 font-bold">Anime</span>
+      </div>
+      <div onclick="window.showPage('downloads')" class="flex flex-col items-center justify-center cursor-pointer ${currentPage === 'downloads' ? 'text-cyan-400' : 'text-slate-400'}">
+        <i class="fa-solid fa-download text-lg"></i>
+        <span class="text-[10px] mt-1 font-bold">Downloads</span>
+      </div>
+      <div onclick="window.showPage('settings')" class="flex flex-col items-center justify-center cursor-pointer ${currentPage === 'settings' ? 'text-cyan-400' : 'text-slate-400'}">
+        <i class="fa-solid fa-gear text-lg"></i>
+        <span class="text-[10px] mt-1 font-bold">Settings</span>
+      </div>
+    `;
+  }
+
+  if (currentPage === 'home') {
+    const pList = platformArray();
+    const bannersList = bannerArray();
+    const catList = categoryArray();
+
+    const defaultGenres = ["All", "Action", "Drama", "Comedy", "Sci-Fi", "Romance", "Thriller", "Anime", "Movies/tv"];
+    const dynamicCategories = catList.map(c => c.name || c.title).filter(Boolean);
+    const combinedGenres = Array.from(new Set([...defaultGenres, ...dynamicCategories]));
+
+    let moviesList = [];
+    let seriesList = [];
+    let filteredWatchHistory = watchHistory;
+
+    if (selectedGenre.toLowerCase() === "anime") {
+      moviesList = animeMoviesArray();
+      seriesList = animeWebseriesArray();
+      filteredWatchHistory = watchHistory.filter(item => isAnimeItem(item));
+    } else if (selectedGenre.toLowerCase() === "movies/tv") {
+      moviesList = nonAnimeMoviesArray();
+      seriesList = nonAnimeWebseriesArray();
+      filteredWatchHistory = watchHistory.filter(item => !isAnimeItem(item));
+    } else {
+      moviesList = nonAnimeMoviesArray();
+      seriesList = nonAnimeWebseriesArray();
+      filteredWatchHistory = watchHistory.filter(item => !isAnimeItem(item));
+
+      if (selectedGenre !== "All") {
+        moviesList = moviesList.filter(m => {
+          const mGenre = (m.genre || m.category || "").toLowerCase();
+          return mGenre.includes(selectedGenre.toLowerCase());
+        });
+        seriesList = seriesList.filter(s => {
+          const sGenre = (s.genre || s.category || "").toLowerCase();
+          return sGenre.includes(selectedGenre.toLowerCase());
+        });
+      }
+    }
+    
+    appEl.innerHTML = `
+      <div>
+        <!-- Updated Header with Download App button to the left of the search icon -->
+        <div class="flex items-center justify-between px-4 py-3">
+          <h1 class="text-xs md:text-sm font-black text-cyan-400 tracking-wide">XeonMovies - Hub</h1>
+          <div class="flex items-center gap-2">
+            <button onclick="window.downloadOfficialApp()" class="bg-gradient-to-r from-cyan-500/20 to-blue-600/20 border border-cyan-500/30 text-cyan-400 px-2.5 py-1.5 rounded-xl text-[10px] font-black flex items-center gap-1.5 shadow-md transition hover:bg-cyan-500/30">
+              <i class="fa-solid fa-mobile-screen-button text-[10px]"></i>
+              <span>Download App</span>
+            </button>
+            <button onclick="window.goToSearchPage()" class="w-8 h-8 rounded-full bg-white/10 flex items-center justify-center text-white hover:bg-white/20 transition">
+              <i class="fa-solid fa-magnifying-glass text-xs"></i>
+            </button>
+          </div>
+        </div>
+
+        <div id="heroBannerContainer" class="w-full"></div>
+
+        <div class="px-4 mt-4">
+          <div class="flex gap-2 overflow-x-auto pb-1">
+            ${combinedGenres.map(genre => `
+              <button onclick="window.setGenreFilter('${esc(genre)}')" class="px-4 py-1.5 rounded-full text-xs font-bold transition whitespace-nowrap cursor-pointer ${selectedGenre === genre ? 'bg-cyan-500 text-black shadow-md shadow-cyan-500/30' : 'bg-[#121826] text-slate-300 border border-white/10'}">
+                ${esc(genre)}
+              </button>
+            `).join('')}
+          </div>
+        </div>
+
+        <div class="p-4">
+          ${filteredWatchHistory.length > 0 ? `
+            <div class="mb-6">
+              <h2 class="text-xs font-bold text-cyan-400 tracking-wider mb-3 flex items-center gap-1.5">
+                <i class="fa-solid fa-play text-xs"></i> Continue Watching
+              </h2>
+              <div class="flex gap-3 overflow-x-auto pb-2">
+                ${filteredWatchHistory.map(item => `
+                  <div onclick="window.openDetail('${esc(item.id)}', '${esc(item.type || 'movie')}');" class="flex-shrink-0 w-28 cursor-pointer group">
+                    <div class="relative w-full aspect-[2/3] rounded-xl overflow-hidden bg-slate-900 border border-white/5">
+                      <img src="${esc(item.posterUrl || item.imageUrl)}" class="w-full h-full object-cover group-hover:scale-105 transition">
+                      <div class="absolute inset-0 bg-black/30 flex items-center justify-center">
+                        <div class="w-8 h-8 rounded-full bg-cyan-500/80 text-black flex items-center justify-center shadow-lg"><i class="fa-solid fa-play text-xs"></i></div>
+                      </div>
+                    </div>
+                    <h4 class="text-[11px] font-bold text-slate-200 truncate mt-1">${esc(item.title || item.name)}</h4>
+                  </div>
+                `).join('')}
+              </div>
+            </div>
+          ` : ''}
+
+          <div class="mb-6">
+            <h2 class="text-xs font-bold text-slate-400 tracking-wider mb-3">FAMOUS PLATFORMS</h2>
+            <div class="flex gap-4 overflow-x-auto pb-2">
+              ${pList.length > 0 ? pList.map(p => `
+                <div onclick="window.openPlatformPage('${esc(p.id)}')" class="flex flex-col items-center flex-shrink-0 cursor-pointer">
+                  <div class="w-14 h-14 rounded-full bg-slate-800 border border-white/10 flex items-center justify-center overflow-hidden mb-1 shadow-md hover:scale-105 transition">
+                    ${p.iconUrl || p.imageUrl ? `<img src="${esc(p.iconUrl || p.imageUrl)}" class="w-full h-full object-cover">` : `<span class="text-xs font-bold text-cyan-400">${esc(p.name?.[0] || 'P')}</span>`}
+                  </div>
+                  <span class="text-[11px] text-slate-300 truncate w-16 text-center">${esc(p.name || p.title)}</span>
+                </div>
+              `).join('') : '<p class="text-xs text-slate-500">No platforms added.</p>'}
+            </div>
+          </div>
+
+          <div class="mb-6">
+            <h2 class="text-xs font-bold text-slate-400 tracking-wider mb-3">${selectedGenre.toLowerCase() === 'anime' ? 'ANIME MOVIES' : 'MOVIES'}</h2>
+            <div class="grid grid-cols-2 gap-3">
+              ${moviesList.length > 0 ? moviesList.map(m => `
+                <div onclick="window.openDetail('${esc(m.id)}', 'movie')" class="bg-slate-900 rounded-xl p-2 cursor-pointer border border-white/5">
+                  <img src="${esc(m.posterUrl || m.imageUrl)}" class="w-full aspect-[2/3] object-cover rounded-lg mb-2">
+                  <h3 class="text-xs font-bold truncate">${esc(m.title || m.name)}</h3>
+                </div>
+              `).join('') : '<p class="text-xs text-slate-500 col-span-2 text-center py-6">No movies found.</p>'}
+            </div>
+          </div>
+
+          <div>
+            <h2 class="text-xs font-bold text-slate-400 tracking-wider mb-3">${selectedGenre.toLowerCase() === 'anime' ? 'ANIME SERIES' : 'WEBSERIES'}</h2>
+            <div class="grid grid-cols-2 gap-3">
+              ${seriesList.length > 0 ? seriesList.map(s => `
+                <div onclick="window.openDetail('${esc(s.id)}', 'series')" class="bg-slate-900 rounded-xl p-2 cursor-pointer border border-white/5">
+                  <img src="${esc(s.posterUrl || s.imageUrl)}" class="w-full aspect-[2/3] object-cover rounded-lg mb-2">
+                  <h3 class="text-xs font-bold truncate">${esc(s.title || s.name)}</h3>
+                </div>
+              `).join('') : '<p class="text-xs text-slate-500 col-span-2 text-center py-6">No webseries found.</p>'}
+            </div>
+          </div>
+        </div>
+      </div>
+    `;
+    updateHeroBannerDOM(bannersList);
+
+  } else if (currentPage === 'platform') {
+    const platformObj = platforms[currentPlatformId] || {};
+    const platformName = platformObj.name || platformObj.title || "Platform";
+
+    const pMoviesObj = platformObj.movies || {};
+    const pSeriesObj = platformObj.series || {};
+    const pAnimeObj = platformObj.anime || {};
+
+    const pMoviesList = Object.entries(pMoviesObj).map(([id, m]) => ({ id, type: 'movie', ...(m || {}) })).filter(m => !isAnimeItem(m));
+    const pSeriesList = Object.entries(pSeriesObj).map(([id, s]) => ({ id, type: 'series', ...(s || {}) })).filter(s => !isAnimeItem(s));
+    const pAnimeList = [
+      ...Object.entries(pMoviesObj).map(([id, m]) => ({ id, type: 'movie', ...(m || {}) })).filter(m => isAnimeItem(m)),
+      ...Object.entries(pSeriesObj).map(([id, s]) => ({ id, type: 'series', ...(s || {}) })).filter(s => isAnimeItem(s)),
+      ...Object.entries(pAnimeObj).map(([id, a]) => ({ id, type: a.seasons ? 'series' : 'movie', ...(a || {}) }))
+    ];
+
+    appEl.innerHTML = `
+      <div class="p-4">
+        <div class="flex items-center justify-between mb-4">
+          <div class="flex items-center gap-3">
+            <button onclick="window.showPage('home')" class="text-white text-base hover:text-cyan-400 transition"><i class="fa-solid fa-arrow-left"></i></button>
+            <h1 class="text-lg font-black text-white">${esc(platformName)}</h1>
+          </div>
+          <button onclick="window.goToSearchPage()" class="w-8 h-8 rounded-full bg-white/10 flex items-center justify-center text-white hover:bg-white/20 transition">
+            <i class="fa-solid fa-magnifying-glass text-xs"></i>
+          </button>
+        </div>
+
+        <div class="flex gap-2 mb-5 overflow-x-auto pb-1">
+          <button onclick="window.setPlatformSubTab('Movies')" class="px-5 py-2 rounded-full text-xs font-bold transition whitespace-nowrap cursor-pointer ${platformSubTab === 'Movies' ? 'bg-white text-black shadow-md' : 'bg-[#121826] text-slate-300 border border-white/10'}">
+            Movies
+          </button>
+          <button onclick="window.setPlatformSubTab('Series')" class="px-5 py-2 rounded-full text-xs font-bold transition whitespace-nowrap cursor-pointer ${platformSubTab === 'Series' ? 'bg-white text-black shadow-md' : 'bg-[#121826] text-slate-300 border border-white/10'}">
+            Series
+          </button>
+          <button onclick="window.setPlatformSubTab('Anime')" class="px-5 py-2 rounded-full text-xs font-bold transition whitespace-nowrap cursor-pointer ${platformSubTab === 'Anime' ? 'bg-white text-black shadow-md' : 'bg-[#121826] text-slate-300 border border-white/10'}">
+            Anime
+          </button>
+        </div>
+
+        ${platformSubTab === 'Movies' ? `
+          <div class="grid grid-cols-2 gap-3">
+            ${pMoviesList.length > 0 ? pMoviesList.map(m => `
+              <div onclick="window.openDetail('${esc(m.id)}', 'movie')" class="bg-slate-900 rounded-xl p-2 cursor-pointer border border-white/5 flex flex-col justify-between">
+                <div>
+                  <img src="${esc(m.posterUrl || m.imageUrl)}" class="w-full aspect-[2/3] object-cover rounded-lg mb-2">
+                  <h3 class="text-xs font-bold truncate">${esc(m.title || m.name)}</h3>
+                </div>
+              </div>
+            `).join('') : '<p class="text-xs text-slate-500 col-span-2 text-center py-10">No movies available</p>'}
+          </div>
+        ` : platformSubTab === 'Series' ? `
+          <div class="grid grid-cols-2 gap-3">
+            ${pSeriesList.length > 0 ? pSeriesList.map(s => `
+              <div onclick="window.openDetail('${esc(s.id)}', 'series')" class="bg-slate-900 rounded-xl p-2 cursor-pointer border border-white/5 flex flex-col justify-between">
+                <div>
+                  <img src="${esc(s.posterUrl || s.imageUrl)}" class="w-full aspect-[2/3] object-cover rounded-lg mb-2">
+                  <h3 class="text-xs font-bold truncate">${esc(s.title || s.name)}</h3>
+                </div>
+              </div>
+            `).join('') : '<p class="text-xs text-slate-500 col-span-2 text-center py-10">No series available</p>'}
+          </div>
+        ` : `
+          <div class="grid grid-cols-2 gap-3">
+            ${pAnimeList.length > 0 ? pAnimeList.map(a => `
+              <div onclick="window.openDetail('${esc(a.id)}', '${esc(a.type || 'movie')}')" class="bg-slate-900 rounded-xl p-2 cursor-pointer border border-white/5 flex flex-col justify-between">
+                <div>
+                  <img src="${esc(a.posterUrl || a.imageUrl)}" class="w-full aspect-[2/3] object-cover rounded-lg mb-2">
+                  <h3 class="text-xs font-bold truncate">${esc(a.title || a.name)}</h3>
+                </div>
+              </div>
+            `).join('') : '<p class="text-xs text-slate-500 col-span-2 text-center py-10">No anime available</p>'}
+          </div>
+        `}
+      </div>
+    `;
+
+  } else if (currentPage === 'anime') {
+    const aMoviesList = animeMoviesArray();
+    const aSeriesList = animeWebseriesArray();
+
+    appEl.innerHTML = `
+      <div class="p-4">
+        <div class="flex items-center justify-between mb-4">
+          <h1 class="text-base font-black text-cyan-400">Anime Hub</h1>
+          <button onclick="window.goToSearchPage()" class="w-8 h-8 rounded-full bg-white/10 flex items-center justify-center text-white hover:bg-white/20 transition">
+            <i class="fa-solid fa-magnifying-glass text-xs"></i>
+          </button>
+        </div>
+
+        <div class="flex gap-3 mb-5 border-b border-white/10 pb-3">
+          <button onclick="window.setAnimeSubTab('movies')" class="flex-1 py-2 rounded-xl text-xs font-bold transition ${animeSubTab === 'movies' ? 'bg-cyan-500 text-black shadow-lg shadow-cyan-500/30' : 'bg-slate-900 text-slate-300 border border-white/5'}">
+            Movies
+          </button>
+          <button onclick="window.setAnimeSubTab('series')" class="flex-1 py-2 rounded-xl text-xs font-bold transition ${animeSubTab === 'series' ? 'bg-cyan-500 text-black shadow-lg shadow-cyan-500/30' : 'bg-slate-900 text-slate-300 border border-white/5'}">
+            Series
+          </button>
+        </div>
+
+        ${animeSubTab === 'movies' ? `
+          <div>
+            <h2 class="text-xs font-bold text-slate-400 tracking-wider mb-3">ANIME MOVIES</h2>
+            <div class="grid grid-cols-2 gap-3">
+              ${aMoviesList.length > 0 ? aMoviesList.map(m => `
+                <div onclick="window.openDetail('${esc(m.id)}', 'movie')" class="bg-slate-900 rounded-xl p-2 cursor-pointer border border-white/5">
+                  <img src="${esc(m.posterUrl || m.imageUrl)}" class="w-full aspect-[2/3] object-cover rounded-lg mb-2">
+                  <h3 class="text-xs font-bold truncate">${esc(m.title || m.name)}</h3>
+                </div>
+              `).join('') : '<p class="text-xs text-slate-500 col-span-2 text-center py-10">No anime movies available.</p>'}
+            </div>
+          </div>
+        ` : `
+          <div>
+            <h2 class="text-xs font-bold text-slate-400 tracking-wider mb-3">ANIME SERIES</h2>
+            <div class="grid grid-cols-2 gap-3">
+              ${aSeriesList.length > 0 ? aSeriesList.map(s => `
+                <div onclick="window.openDetail('${esc(s.id)}', 'series')" class="bg-slate-900 rounded-xl p-2 cursor-pointer border border-white/5">
+                  <img src="${esc(s.posterUrl || s.imageUrl)}" class="w-full aspect-[2/3] object-cover rounded-lg mb-2">
+                  <h3 class="text-xs font-bold truncate">${esc(s.title || s.name)}</h3>
+                </div>
+              `).join('') : '<p class="text-xs text-slate-500 col-span-2 text-center py-10">No anime series available.</p>'}
+            </div>
+          </div>
+        `}
+      </div>
+    `;
+
+  } else if (currentPage === 'downloads') {
+    appEl.innerHTML = `
+      <div class="p-4">
+        <div class="flex items-center justify-between mb-4">
+          <h1 class="text-base font-black">Downloads</h1>
+          ${downloadedItems.length > 0 ? `
+            <button onclick="window.clearAllDownloads()" class="bg-red-500/10 hover:bg-red-500/20 text-red-400 px-3 py-1.5 rounded-lg text-xs font-bold transition flex items-center gap-1.5 border border-red-500/20">
+              <i class="fa-solid fa-trash-can text-[10px]"></i> Clear All
+            </button>
+          ` : ''}
+        </div>
+
+        ${downloadedItems.length === 0 ? '<div class="text-center py-20 text-xs text-slate-500">No downloads available in files</div>' : `
+          <div class="grid grid-cols-2 gap-3">
+            ${downloadedItems.map(item => `
+              <div class="bg-slate-900 rounded-xl p-2 border border-white/5 relative flex flex-col justify-between">
+                <div>
+                  <img src="${esc(item.posterUrl)}" class="w-full aspect-[2/3] object-cover rounded-lg mb-2">
+                  <h3 class="text-xs font-bold truncate">${esc(item.title)}</h3>
+                  <p class="text-[10px] text-cyan-400 mt-0.5">Downloaded in files</p>
+                </div>
+                <button onclick="window.removeDownloadItem('${esc(item.id)}', '${esc(item.title)}')" class="mt-2 w-full bg-red-500/10 hover:bg-red-500/20 text-red-400 py-1.5 rounded-lg text-[11px] font-bold transition flex items-center justify-center gap-1.5 border border-red-500/20">
+                  <i class="fa-solid fa-trash text-[10px]"></i> Remove
+                </button>
+              </div>
+            `).join('')}
+          </div>
+        `}
+      </div>
+    `;
+
+  } else if (currentPage === 'profilesub') {
+    let itemsList = [];
+    let pageTitle = "";
+    if (profileSubTab === 'mylist') { itemsList = savedItems; pageTitle = "My List"; } 
+    else if (profileSubTab === 'mylikes') { itemsList = likedItems; pageTitle = "My Likes"; } 
+    else if (profileSubTab === 'history') { itemsList = watchHistory; pageTitle = "Watch History"; }
+
+    appEl.innerHTML = `
+      <div class="p-4">
+        <div class="flex items-center gap-3 mb-4">
+          <button onclick="window.showPage('settings')" class="text-white text-base hover:text-cyan-400 transition"><i class="fa-solid fa-arrow-left"></i></button>
+          <h1 class="text-lg font-black text-white">${esc(pageTitle)}</h1>
+        </div>
+
+        ${itemsList.length === 0 ? `
+          <div class="text-center py-20 text-xs text-slate-500">No items found in ${esc(pageTitle)}</div>
+        ` : `
+          <div class="grid grid-cols-2 gap-3">
+            ${itemsList.map(item => `
+              <div onclick="window.openDetail('${esc(item.id)}', '${esc(item.type || 'movie')}');" class="bg-slate-900 rounded-xl p-2 cursor-pointer border border-white/5">
+                <img src="${esc(item.posterUrl || item.imageUrl)}" class="w-full aspect-[2/3] object-cover rounded-lg mb-2">
+                <h3 class="text-xs font-bold truncate">${esc(item.title || item.name)}</h3>
+              </div>
+            `).join('')}
+          </div>
+        `}
+      </div>
+    `;
+
+  } else if (currentPage === 'detail') {
+    let item = findItemUniversal(currentSeriesId || currentMovieId, currentSeriesId ? 'series' : 'movie');
+    if (!item && currentSeriesId) item = findItemUniversal(currentSeriesId, 'movie');
+    if (!item && currentMovieId) item = findItemUniversal(currentMovieId, 'series');
+
+    if (!item) {
+      appEl.innerHTML = `<div class="p-8 text-center text-xs">Item not found. <button onclick="window.showPage('home')" class="text-cyan-400 underline font-bold ml-1">Go Home</button></div>`;
+      return;
+    }
+
+    const isSeries = item.type === 'series' || !!item.seasons;
+    const poster = item.posterUrl || item.imageUrl || '';
+    const title = item.title || item.name || '';
+    
+    const allItemsPool = [...animeMoviesArray(), ...animeWebseriesArray(), ...nonAnimeMoviesArray(), ...nonAnimeWebseriesArray()];
+    const allOtherItems = allItemsPool.filter(i => i.id !== item.id);
+
+    const itemUrl = getAnyUrl(item);
+    const trailerUrl = getTrailerUrl(item);
+
+    if (isSeries && item.seasons) {
+      const sKeys = Object.keys(item.seasons);
+      if (!selectedSeasonKey || !item.seasons[selectedSeasonKey]) {
+        selectedSeasonKey = sKeys[0] || null;
+      }
+    }
+
+    appEl.innerHTML = `
+      <div>
+        <div class="relative w-full aspect-[16/9] bg-black overflow-hidden">
+          <div id="detailPosterBox" class="absolute inset-0 w-full h-full transition-opacity duration-500">
+            ${poster ? `<img src="${esc(poster)}" class="w-full h-full object-cover">` : ''}
+          </div>
+          <div id="detailVideoBox" class="absolute inset-0 w-full h-full hidden">
+            <video id="detailTrailerPlayer" src="${esc(trailerUrl)}" autoplay loop playsinline class="w-full h-full object-cover"></video>
+            
+            <div id="trailerBadge" class="absolute top-4 right-4 bg-cyan-500/90 text-black px-2.5 py-1 rounded-full text-[10px] font-black uppercase tracking-wider backdrop-blur-md shadow-lg flex items-center gap-1 hidden">
+              <i class="fa-solid fa-film text-[9px]"></i> Trailer
+            </div>
+
+            <button id="trailerSoundBtn" onclick="window.unmuteTrailer()" class="absolute bottom-4 right-4 bg-black/70 hover:bg-black text-white px-3 py-1.5 rounded-full text-xs font-bold backdrop-blur-md border border-white/20 flex items-center gap-1.5 shadow-xl transition">
+              <i class="fa-solid fa-volume-xmark text-xs text-amber-400"></i> Sound On
+            </button>
+          </div>
+
+          <div class="absolute inset-0 bg-gradient-to-t from-[#0b0f19] via-black/20 to-transparent pointer-events-none"></div>
+          <button onclick="window.showPage('home')" class="absolute top-4 left-4 z-20 bg-black/60 text-white w-9 h-9 rounded-full flex items-center justify-center backdrop-blur-md">
+            <i class="fa-solid fa-arrow-left text-xs"></i>
+          </button>
+        </div>
+
+        <div class="p-4 relative z-10 pb-24">
+          <h1 class="text-2xl font-black text-white mb-2">${esc(title)}</h1>
+          
+          <div class="flex items-center gap-3 mb-4">
+            <span class="text-xs bg-amber-500 text-black px-2 py-0.5 rounded font-bold"><i class="fa-solid fa-star text-[10px]"></i> ${esc(item.rating || '6.5')}</span>
+            <span class="text-xs text-slate-300 font-bold">${esc(item.year || '2019')}</span>
+            ${item.genre ? `<span class="text-xs text-cyan-400 font-semibold">• ${esc(item.genre)}</span>` : ''}
+          </div>
+
+          <div class="mb-4">
+            <h3 class="text-xs font-bold text-slate-400 tracking-wider mb-1">STORYLINE</h3>
+            <p class="text-xs text-slate-300 leading-relaxed">${esc(item.description || item.plot || 'Test storyline')}</p>
+          </div>
+
+          ${isSeries ? `
+            <div class="mb-6">
+              <h3 class="text-xs font-bold text-cyan-400 tracking-wider mb-3 flex items-center gap-1.5">
+                <i class="fa-solid fa-list text-xs"></i> Season List
+              </h3>
+              ${item.seasons ? `
+                <div class="flex gap-2 overflow-x-auto pb-2 mb-3">
+                  ${Object.keys(item.seasons).map(sKey => `
+                    <button type="button" onclick="window.selectSeason('${esc(sKey)}')" class="px-4 py-2 rounded-xl text-xs font-bold whitespace-nowrap transition cursor-pointer ${selectedSeasonKey === sKey ? 'bg-cyan-500 text-black shadow-lg shadow-cyan-500/30' : 'bg-[#121826] text-slate-300 border border-white/5'}">
+                      ${esc(sKey)}
+                    </button>
+                  `).join('')}
+                </div>
+                
+                <div class="space-y-2">
+                  ${(() => {
+                    let activeSeason = item.seasons[selectedSeasonKey] || Object.values(item.seasons)[0];
+                    if (!activeSeason || !activeSeason.episodes) return '<p class="text-xs text-slate-500">No episodes found.</p>';
+                    return Object.entries(activeSeason.episodes).map(([epKey, ep], idx) => {
+                      let epTitle = ep.title || `Episode ${idx + 1}`;
+                      return `
+                        <div onclick="window.openWatchScreen('${esc(item.id)}', 'series', ${JSON.stringify(ep).replace(/"/g, '&quot;')}, '${esc(epTitle)}', '${esc(selectedSeasonKey)}', ${idx + 1})" class="bg-[#121826] border border-white/5 p-3 rounded-xl flex items-center justify-between cursor-pointer hover:bg-white/5 transition">
+                          <div class="flex items-center gap-3">
+                            <div class="w-8 h-8 rounded-lg bg-cyan-500/10 text-cyan-400 flex items-center justify-center font-bold text-xs">
+                              <i class="fa-solid fa-play"></i>
+                            </div>
+                            <div>
+                              <h4 class="text-xs font-bold text-white">${esc(epTitle)}</h4>
+                              <p class="text-[10px] text-slate-400">${esc(selectedSeasonKey)}</p>
+                            </div>
+                          </div>
+                          <span class="text-[11px] text-cyan-400 font-bold">Play</span>
+                        </div>
+                      `;
+                    }).join('');
+                  })()}
+                </div>
+              ` : `
+                ${itemUrl ? `
+                  <div onclick="window.openWatchScreen('${esc(item.id)}', 'series', ${JSON.stringify(item).replace(/"/g, '&quot;')}, '${esc(title)}', 'Season 1', 1)" class="bg-[#121826] border border-white/5 p-3 rounded-xl flex items-center justify-between cursor-pointer hover:bg-white/5 transition mb-3">
+                    <div class="flex items-center gap-3">
+                      <div class="w-8 h-8 rounded-lg bg-cyan-500/10 text-cyan-400 flex items-center justify-center font-bold text-xs"><i class="fa-solid fa-play"></i></div>
+                      <div>
+                        <h4 class="text-xs font-bold text-white">${esc(title)}</h4>
+                        <p class="text-[10px] text-slate-400">Direct Play / Watch URL</p>
+                      </div>
+                    </div>
+                    <span class="text-[11px] text-cyan-400 font-bold">Play</span>
+                  </div>
+                ` : '<p class="text-xs text-slate-500">No seasons or episodes available.</p>'}
+              `}
+            </div>
+          ` : `
+            <div class="fixed bottom-20 right-6 z-30 flex gap-2">
+              <button onclick="window.handleDownload('${esc(item.id)}', 'movie', '${esc(title)}', '${esc(poster)}', '${esc(itemUrl)}')" class="bg-white/10 backdrop-blur-md text-white px-4 py-3 rounded-full text-xs font-black uppercase tracking-wider flex items-center gap-2 shadow-2xl hover:bg-white/20 transition">
+                <i class="fa-solid fa-download text-xs"></i> Download
+              </button>
+              <button onclick="window.openWatchScreen('${esc(item.id)}', 'movie')" class="bg-gradient-to-r from-cyan-500 to-blue-600 text-white px-6 py-3 rounded-full text-xs font-black uppercase tracking-wider flex items-center gap-2 shadow-2xl shadow-cyan-500/30 hover:opacity-95 transition">
+                <i class="fa-solid fa-play text-xs"></i> Watch
+              </button>
+            </div>
+          `}
+
+          <div class="mt-8">
+            <h3 class="text-xs font-bold text-cyan-400 tracking-wider mb-3 flex items-center gap-1.5">
+              <i class="fa-solid fa-fire text-xs"></i> You May Also Like
+            </h3>
+            <div class="grid grid-cols-2 gap-3">
+              ${allOtherItems.length > 0 ? allOtherItems.map(oth => `
+                <div onclick="window.openDetail('${esc(oth.id)}', '${esc(oth.type || 'movie')}');" class="bg-slate-900 rounded-xl p-2 cursor-pointer border border-white/5">
+                  <img src="${esc(oth.posterUrl || oth.imageUrl)}" class="w-full aspect-[2/3] object-cover rounded-lg mb-2">
+                  <h3 class="text-xs font-bold truncate">${esc(oth.title || oth.name)}</h3>
+                </div>
+              `).join('') : '<p class="text-xs text-slate-500">No recommendations found.</p>'}
+            </div>
+          </div>
+        </div>
+      </div>
+    `;
+
+  } else if (currentPage === 'settings') {
+    appEl.innerHTML = `
+      <div class="p-4 space-y-3">
+        <h1 class="text-base font-black mb-4">Profile & Settings</h1>
+
+        <div onclick="window.showPage('downloads')" class="bg-[#121826] border border-white/5 p-4 rounded-2xl flex items-center justify-between cursor-pointer hover:bg-white/5 transition">
+          <div class="flex items-center gap-3">
+            <i class="fa-solid fa-download text-cyan-400 text-sm"></i>
+            <span class="text-xs font-bold text-white">Downloads</span>
+          </div>
+          <div class="flex items-center gap-2">
+            <span class="text-xs text-slate-400 font-semibold">${downloadedItems.length}</span>
+            <i class="fa-solid fa-chevron-right text-[10px] text-slate-400"></i>
+          </div>
+        </div>
+
+        <div onclick="window.openProfileSub('mylist')" class="bg-[#121826] border border-white/5 p-4 rounded-2xl flex items-center justify-between cursor-pointer hover:bg-white/5 transition">
+          <div class="flex items-center gap-3">
+            <i class="fa-solid fa-bookmark text-cyan-400 text-sm"></i>
+            <span class="text-xs font-bold text-white">My List</span>
+          </div>
+          <div class="flex items-center gap-2">
+            <span class="text-xs text-slate-400 font-semibold">${savedItems.length}</span>
+            <i class="fa-solid fa-chevron-right text-[10px] text-slate-400"></i>
+          </div>
+        </div>
+
+        <div onclick="window.openProfileSub('mylikes')" class="bg-[#121826] border border-white/5 p-4 rounded-2xl flex items-center justify-between cursor-pointer hover:bg-white/5 transition">
+          <div class="flex items-center gap-3">
+            <i class="fa-solid fa-thumbs-up text-cyan-400 text-sm"></i>
+            <span class="text-xs font-bold text-white">My Likes</span>
+          </div>
+          <div class="flex items-center gap-2">
+            <span class="text-xs text-slate-400 font-semibold">${likedItems.length}</span>
+            <i class="fa-solid fa-chevron-right text-[10px] text-slate-400"></i>
+          </div>
+        </div>
+
+        <div class="bg-[#121826] border border-white/5 p-4 rounded-2xl">
+          <div onclick="window.openProfileSub('history')" class="flex items-center justify-between cursor-pointer mb-3">
+            <div class="flex items-center gap-3">
+              <i class="fa-solid fa-clock-rotate-left text-cyan-400 text-sm"></i>
+              <span class="text-xs font-bold text-white">Watch History</span>
+            </div>
+            <i class="fa-solid fa-chevron-right text-[10px] text-slate-400"></i>
+          </div>
+          ${watchHistory.length > 0 ? `
+            <div class="flex gap-3 overflow-x-auto pb-1">
+              ${watchHistory.map(item => `
+                <div onclick="window.openDetail('${esc(item.id)}', '${esc(item.type || 'movie')}');" class="flex-shrink-0 w-20 cursor-pointer">
+                  <img src="${esc(item.posterUrl || item.imageUrl)}" class="w-full aspect-[2/3] object-cover rounded-lg mb-1">
+                  <h4 class="text-[10px] text-slate-300 truncate">${esc(item.title || item.name)}</h4>
+                </div>
+              `).join('')}
+            </div>
+          ` : '<p class="text-[10px] text-slate-500">No recent history</p>'}
+        </div>
+      </div>
+    `;
+  } else if (currentPage === 'search') {
+    appEl.innerHTML = `
+      <div class="p-4">
+        <div class="flex items-center gap-3 mb-3">
+          <button onclick="window.showPage('home')" class="text-white text-base"><i class="fa-solid fa-arrow-left"></i></button>
+          <div class="relative flex-1">
+            <i class="fa-solid fa-magnifying-glass absolute left-3 top-1/2 -translate-y-1/2 text-xs text-slate-400"></i>
+            <input type="text" id="searchInputField" value="${esc(searchQuery)}" oninput="window.handleSearchInput(this.value)" placeholder="Search movies, webseries..." class="w-full bg-slate-900 border border-white/10 rounded-xl py-2 pl-9 pr-4 text-xs text-white focus:outline-none focus:border-cyan-500">
+          </div>
+        </div>
+
+        <div id="searchResultsContainer">
+          ${getSearchResultsHTML(searchQuery)}
+        </div>
+      </div>
+    `;
+  } else if (currentPage === 'watch') {
+    const isSaved = savedItems.some(i => i.id === selectedEpisode.id);
+    const isLiked = likedItems.some(i => i.id === selectedEpisode.id);
+    
+    const allItemsPool = [...animeMoviesArray(), ...animeWebseriesArray(), ...nonAnimeMoviesArray(), ...nonAnimeWebseriesArray()];
+    const allOtherItems = allItemsPool.filter(i => i.id !== selectedEpisode.id);
+    
+    const seriesObj = findItemUniversal(selectedEpisode.id, 'series');
+    const mediaItem = findItemUniversal(selectedEpisode.id, selectedEpisode.type);
+
+    let activeQualityNode = mediaItem;
+    if (selectedEpisode.type === 'series' && seriesObj && seriesObj.seasons && seriesObj.seasons[selectedEpisode.seasonName]) {
+      const eps = seriesObj.seasons[selectedEpisode.seasonName].episodes || {};
+      const epValues = Object.values(eps);
+      activeQualityNode = epValues[selectedEpisode.episodeNumber - 1] || mediaItem;
+    }
+
+    const availableLangs = getAvailableLanguages(activeQualityNode);
+    if (!selectedLanguage || !availableLangs.includes(selectedLanguage)) {
+      selectedLanguage = availableLangs[0] || "Hindi";
+    }
+
+    const availableQualitiesMap = getAvailableQualitiesData(activeQualityNode, selectedLanguage);
+    const availableQualitiesKeys = Object.keys(availableQualitiesMap);
+    
+    if (!selectedQuality || !availableQualitiesMap[selectedQuality]) {
+      selectedQuality = availableQualitiesKeys[availableQualitiesKeys.length - 1] || "1080p";
+    }
+
+    selectedEpisode.videoUrl = resolveVideoUrl(activeQualityNode, selectedQuality, selectedLanguage);
+
+    let displayHeaderTitle = selectedEpisode.title;
+    if (selectedEpisode.type === 'series') {
+      displayHeaderTitle = `${selectedEpisode.title} - Ep ${selectedEpisode.episodeNumber}`;
+    }
+
+    appEl.innerHTML = `
+      <div class="relative">
+        <div class="flex items-center justify-between px-4 py-3 bg-[#121826]/90 sticky top-0 z-50 backdrop-blur-md">
+          <button onclick="window.openDetail('${esc(selectedEpisode.id)}', '${esc(selectedEpisode.type)}')" class="text-white text-sm flex items-center gap-2">
+            <i class="fa-solid fa-arrow-left"></i>
+          </button>
+          <span class="text-xs font-black text-white tracking-wide truncate max-w-[150px]">${esc(displayHeaderTitle)}</span>
+          <div class="items-center gap-2.5 flex relative">
+            
+            <div class="relative">
+              <button onclick="window.toggleLanguageMenu()" class="text-amber-400 font-bold text-[11px] bg-amber-500/10 border border-amber-500/30 px-2 py-1 rounded-lg flex items-center gap-1 transition">
+                <i class="fa-solid fa-globe text-[9px]"></i> ${esc(selectedLanguage)}
+              </button>
+
+              ${isLanguageMenuOpen ? `
+                <div class="absolute right-0 top-10 bg-[#121826] border border-white/15 rounded-xl shadow-2xl py-2 z-50 min-w-[130px] backdrop-blur-xl">
+                  <div class="px-3 py-1 text-[10px] font-bold text-slate-400 border-b border-white/10 mb-1">Audio / Language</div>
+                  ${availableLangs.map(lang => `
+                    <div onclick="window.setPlayerLanguage('${esc(lang)}')" class="px-4 py-2 text-xs text-white hover:bg-cyan-500/20 cursor-pointer transition flex items-center justify-between ${selectedLanguage === lang ? 'text-cyan-400 font-black bg-cyan-500/10' : ''}">
+                      <span>${esc(lang)}</span> ${selectedLanguage === lang ? '<i class="fa-solid fa-check text-[10px]"></i>' : ''}
+                    </div>
+                  `).join('')}
+                </div>
+              ` : ''}
+            </div>
+
+            <div class="relative">
+              <button onclick="window.toggleQualityMenu()" class="text-cyan-400 font-black text-[11px] bg-cyan-500/10 border border-cyan-500/30 px-2.5 py-1 rounded-lg flex items-center gap-1 transition">
+                <i class="fa-solid fa-sliders text-[9px]"></i> ${esc(selectedQuality || '1080p')}
+              </button>
+
+              ${isQualityMenuOpen ? `
+                <div class="absolute right-0 top-10 bg-[#121826] border border-white/15 rounded-xl shadow-2xl py-2 z-50 min-w-[140px] backdrop-blur-xl">
+                  <div class="px-3 py-1 text-[10px] font-bold text-slate-400 border-b border-white/10 mb-1">Select Quality</div>
+                  ${availableQualitiesKeys.length > 0 ? availableQualitiesKeys.map(qKey => `
+                    <div onclick="window.setPlayerQuality('${esc(qKey)}')" class="px-4 py-2 text-xs text-white hover:bg-cyan-500/20 cursor-pointer transition flex items-center justify-between ${selectedQuality === qKey ? 'text-cyan-400 font-black bg-cyan-500/10' : ''}">
+                      <span>${esc(qKey)}</span> ${selectedQuality === qKey ? '<i class="fa-solid fa-check text-[10px]"></i>' : ''}
+                    </div>
+                  `).join('') : '<div class="px-4 py-2 text-[11px] text-slate-500">No qualities available</div>'}
+                </div>
+              ` : ''}
+            </div>
+
+            <button onclick="window.toggleVideoFullscreen()" class="text-white/80 px-1" title="Fullscreen"><i class="fa-solid fa-expand text-xs"></i></button>
+
+          </div>
+        </div>
+
+        <div class="w-full bg-black aspect-video relative flex items-center justify-center">
+          ${selectedEpisode.videoUrl ? `
+            <video id="mainVideoPlayer" src="${esc(selectedEpisode.videoUrl)}" controls autoplay playsinline onended="${selectedEpisode.type === 'series' ? 'window.playNextEpisode()' : ''}" class="w-full h-full object-contain"></video>
+          ` : `
+            <div class="text-center p-4">
+              <i class="fa-solid fa-triangle-exclamation text-amber-400 text-2xl mb-2"></i>
+              <p class="text-xs text-slate-300">Video source link not found in database for selected quality/language!</p>
+            </div>
+          `}
+        </div>
+
+        <div class="p-4 relative">
+          <div class="flex items-center justify-between mb-2">
+            <h1 class="text-xl font-bold text-white">${esc(selectedEpisode.title)}</h1>
+            ${selectedEpisode.type === 'series' ? `
+              <button onclick="window.playNextEpisode()" class="bg-cyan-500/20 hover:bg-cyan-500/30 text-cyan-400 border border-cyan-500/30 px-3 py-1 rounded-lg text-xs font-bold transition flex items-center gap-1">
+                Next Ep <i class="fa-solid fa-forward text-[10px]"></i>
+              </button>
+            ` : ''}
+          </div>
+          
+          <div class="flex items-center gap-3 mb-3 text-xs flex-wrap">
+            <span class="text-amber-400 font-bold flex items-center gap-1"><i class="fa-solid fa-star text-[10px]"></i> ${esc(selectedEpisode.rating)}</span>
+            <span class="text-slate-300 font-bold">${esc(selectedEpisode.year)}</span>
+            ${selectedEpisode.type === 'series' ? `<span class="text-slate-400">Season ${esc(selectedEpisode.seasonName?.replace('season_', ''))} E${esc(selectedEpisode.episodeNumber)}</span>` : '<span class="text-slate-400">Movie</span>'}
+            <span class="text-cyan-400 bg-cyan-500/10 px-2 py-0.5 rounded border border-cyan-500/20 font-bold">Lang: ${esc(selectedLanguage)}</span>
+          </div>
+
+          <div class="flex items-center justify-between mb-4">
+            <div class="flex items-center gap-2 overflow-x-auto pb-1">
+              <button onclick="if(navigator.share) { navigator.share({title: '${esc(selectedEpisode.title)}', url: window.location.href}); } else { showToast('Link copied!'); }" class="bg-white/10 hover:bg-white/20 text-white px-3.5 py-1.5 rounded-full text-xs font-bold flex items-center gap-1.5 transition whitespace-nowrap">
+                <i class="fa-solid fa-share-nodes text-[10px]"></i> Share
+              </button>
+              <button onclick="window.handleDownload('${esc(selectedEpisode.id)}', '${esc(selectedEpisode.type)}', '${esc(selectedEpisode.title)}', '${esc(selectedEpisode.posterUrl)}', '${esc(selectedEpisode.videoUrl)}')" class="bg-white/10 hover:bg-white/20 text-white px-3.5 py-1.5 rounded-full text-xs font-bold flex items-center gap-1.5 transition whitespace-nowrap">
+                <i class="fa-solid fa-download text-[10px]"></i> Download
+              </button>
+              <button onclick="window.toggleSaveItem('${esc(selectedEpisode.id)}', '${esc(selectedEpisode.type)}', '${esc(selectedEpisode.title)}', '${esc(selectedEpisode.posterUrl)}')" class="${isSaved ? 'bg-cyan-500 text-black' : 'bg-white/10 text-white'} px-3.5 py-1.5 rounded-full text-xs font-bold flex items-center gap-1.5 transition whitespace-nowrap">
+                <i class="fa-solid ${isSaved ? 'fa-check' : 'fa-bookmark'} text-[10px]"></i> ${isSaved ? 'Saved' : 'Save'}
+              </button>
+              <button onclick="window.toggleLikeItem('${esc(selectedEpisode.id)}', '${esc(selectedEpisode.type)}', '${esc(selectedEpisode.title)}', '${esc(selectedEpisode.posterUrl)}')" class="${isLiked ? 'bg-cyan-500 text-black' : 'bg-white/10 text-white'} px-3.5 py-1.5 rounded-full text-xs font-bold flex items-center gap-1.5 transition whitespace-nowrap">
+                <i class="fa-solid ${isLiked ? 'fa-check' : 'fa-heart'} text-[10px]"></i> ${isLiked ? 'Liked' : 'Like'}
+              </button>
+            </div>
+
+            ${selectedEpisode.type === 'series' && seriesObj && seriesObj.seasons ? `
+              <div class="relative">
+                <button onclick="window.toggleWatchSeasonDropdown()" class="bg-[#121826] border border-white/10 hover:bg-white/10 text-cyan-400 px-3 py-1.5 rounded-full text-xs font-bold flex items-center gap-1.5 transition whitespace-nowrap">
+                  <span>${esc(selectedEpisode.seasonName || 'Season 1')}</span>
+                  <i class="fa-solid fa-chevron-down text-[10px]"></i>
+                </button>
+                ${isWatchSeasonDropdownOpen ? `
+                  <div class="absolute right-0 mt-1 bg-[#121826] border border-white/10 rounded-xl shadow-2xl py-1 z-50 min-w-[120px]">
+                    ${Object.keys(seriesObj.seasons).map(sKey => `
+                      <div onclick="window.selectWatchSeason('${esc(sKey)}')" class="px-4 py-2 text-xs text-white hover:bg-white/10 cursor-pointer transition ${selectedEpisode.seasonName === sKey ? 'text-cyan-400 font-bold bg-white/5' : ''}">
+                        ${esc(sKey)}
+                      </div>
+                    `).join('')}
+                  </div>
+                ` : ''}
+              </div>
+            ` : ''}
+          </div>
+
+          ${selectedEpisode.type === 'series' && seriesObj && seriesObj.seasons ? `
+            <div class="mb-4">
+              <div class="flex gap-2 overflow-x-auto pb-2">
+                ${(() => {
+                  let activeSeason = seriesObj.seasons[selectedEpisode.seasonName] || Object.values(seriesObj.seasons)[0];
+                  if (!activeSeason || !activeSeason.episodes) return '<p class="text-xs text-slate-500">No episodes found</p>';
+                  return Object.entries(activeSeason.episodes).map(([epKey, ep], idx) => {
+                    let epTitle = ep.title || `Episode ${idx + 1}`;
+                    let isCurrentEp = selectedEpisode.episodeNumber === (idx + 1);
+                    return `
+                      <button onclick="window.playSpecificEpisode(${JSON.stringify(ep).replace(/"/g, '&quot;')}, '${esc(epTitle)}', '${esc(selectedEpisode.seasonName)}', ${idx + 1})" class="w-12 h-12 rounded-xl flex items-center justify-center font-bold text-xs transition flex-shrink-0 cursor-pointer ${isCurrentEp ? 'bg-cyan-500 text-black shadow-lg shadow-cyan-500/30' : 'bg-[#121826] text-white border border-white/10 hover:bg-white/10'}">
+                        ${idx + 1 < 10 ? '0' + (idx + 1) : idx + 1}
+                      </button>
+                    `;
+                  }).join('');
+                })()}
+              </div>
+            </div>
+          ` : ''}
+
+          <div class="mt-6">
+            <h2 class="text-xs font-bold text-cyan-400 tracking-wider mb-3 flex items-center gap-1.5">
+              <i class="fa-solid fa-fire text-xs"></i> You May Also Like
+            </h2>
+            <div class="grid grid-cols-2 gap-3">
+              ${allOtherItems.length > 0 ? allOtherItems.slice(0, 4).map(oth => `
+                <div onclick="window.openDetail('${esc(oth.id)}', '${esc(oth.type || 'movie')}');" class="bg-slate-900 rounded-xl p-2 cursor-pointer border border-white/5">
+                  <img src="${esc(oth.posterUrl || oth.imageUrl)}" class="w-full aspect-[2/3] object-cover rounded-lg mb-2">
+                  <h3 class="text-xs font-bold truncate">${esc(oth.title || oth.name)}</h3>
+                </div>
+              `).join('') : '<p class="text-xs text-slate-500">No recommendations found.</p>'}
+            </div>
+          </div>
+        </div>
+      </div>
+    `;
+  }
+}
+render();
+</script>
+</body>
+</html>
