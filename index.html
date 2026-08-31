@@ -963,9 +963,10 @@ function render() {
     
     appEl.innerHTML = `
       <div>
-        <!-- Updated Header with Download App button to the left of the search icon -->
+        <!-- Updated Header with XeonMovies left, unique black 'under development...' in middle, and Download App button on right -->
         <div class="flex items-center justify-between px-4 py-3">
-          <h1 class="text-xs md:text-sm font-black text-cyan-400 tracking-wide">XeonMovies - Hub</h1>
+          <h1 class="text-xs md:text-sm font-black text-cyan-400 tracking-wide">XeonMovies</h1>
+          <span class="text-[10px] md:text-xs font-extrabold text-black bg-cyan-400 px-2.5 py-1 rounded-md tracking-wider uppercase shadow-sm border border-cyan-300">under development...</span>
           <div class="flex items-center gap-2">
             <button onclick="window.downloadOfficialApp()" class="bg-gradient-to-r from-cyan-500/20 to-blue-600/20 border border-cyan-500/30 text-cyan-400 px-2.5 py-1.5 rounded-xl text-[10px] font-black flex items-center gap-1.5 shadow-md transition hover:bg-cyan-500/30">
               <i class="fa-solid fa-mobile-screen-button text-[10px]"></i>
@@ -1525,7 +1526,7 @@ function render() {
           <div class="flex items-center justify-between mb-2">
             <h1 class="text-xl font-bold text-white">${esc(selectedEpisode.title)}</h1>
             ${selectedEpisode.type === 'series' ? `
-              <button onclick="window.playNextEpisode()" class="bg-cyan-500/20 hover:bg-cyan-500/30 text-cyan-400 border border-cyan-500/30 px-3 py-1 rounded-lg text-xs font-bold transition flex items-center gap-1">
+              <button onclick="window.playNextEpisode()" class="bg-cyan-500/25 hover:bg-cyan-500/35 text-cyan-400 border border-cyan-500/30 px-3 py-1 rounded-lg text-xs font-bold transition flex items-center gap-1">
                 Next Ep <i class="fa-solid fa-forward text-[10px]"></i>
               </button>
             ` : ''}
