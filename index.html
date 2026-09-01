@@ -24,11 +24,10 @@
   <div id="bottomNav" class="w-full grid grid-cols-4 py-3 items-center max-w-xl mx-auto md:max-w-3xl"></div>
 </nav>
 
-<!-- Custom Toast Notification Container -->
 <div id="toastContainer" class="fixed top-5 left-1/2 -translate-x-1/2 z-50 pointer-events-none transition-all duration-300 opacity-0 transform -translate-y-4">
   <div class="bg-blue-600 text-white px-5 py-3 rounded-2xl shadow-2xl shadow-blue-500/50 flex items-center gap-2.5 border border-blue-400/30 backdrop-blur-md">
     <i class="fa-solid fa-circle-check text-sm"></i>
-    <span id="toastMessage" class="text-xs font-bold tracking-wide">Download start in files</span>
+    <span id="toastMessage" class="text-xs font-bold tracking-wide">Notification</span>
   </div>
 </div>
 
@@ -76,6 +75,10 @@ let selectedSeasonKey = null;
 let isPlaybackSettingsOpen = false;
 let isWatchSeasonDropdownOpen = false;
 let isQualityMenuOpen = false; 
+let isAspectMenuOpen = false;
+let currentAspectFit = "contain";
+let currentAspectLabel = "Default";
+let currentCustomAspect = "";
 let currentPlaybackSpeed = 1.0;
 let selectedEpisode = { id: "", type: "movie", title: "", episodeNumber: 1, seasonName: "Movie", videoUrl: "", posterUrl: "", rating: "8.0", year: "2025" };
 
@@ -95,26 +98,14 @@ function showToast(msg = "Download start in files") {
   }, 3000);
 }
 
-window.downloadOfficialApp = function() {
-  const appUrl = "https://moviesallwatchdowanload-web.github.io/Xeonmovies/"; 
-  showToast("Opening download link...");
-  if(appUrl && appUrl !== "#") {
-    const a = document.createElement('a');
-    a.href = appUrl;
-    a.target = '_blank';
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-  }
-};
-
 function esc(value) {
   return String(value ?? "").replace(/[&<>"']/g, char => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#039;" }[char]));
 }
 
 function getAnyUrl(obj) {
   if (!obj) return "";
-  if (typeof obj === "string") return obj;
+  if (typeof obj === "string") return obj.trim();
+  if (typeof obj !== "object") return "";
   return obj.watchUrl || obj.link || obj.url || obj.videoUrl || obj.downloadUrl || obj.file || obj.source || obj.mediaUrl || obj.video || obj.mp4 || obj.src || obj.streamUrl || obj.epUrl || "";
 }
 
@@ -124,17 +115,27 @@ function getTrailerUrl(obj) {
 }
 
 function getAvailableLanguages(targetNode) {
-  if (!targetNode) return ["Hindi"];
+  if (!targetNode) return [];
   let langs = [];
+
+  if (targetNode.videoSources && typeof targetNode.videoSources === "object" && !Array.isArray(targetNode.videoSources)) {
+    Object.keys(targetNode.videoSources).forEach(l => {
+      const qObj = targetNode.videoSources[l];
+      if (qObj && typeof qObj === 'object') {
+        const hasUrl = Object.values(qObj).some(val => val && String(val).trim().length > 5);
+        if (hasUrl) langs.push(String(l).trim());
+      }
+    });
+  }
 
   if (targetNode.languages && typeof targetNode.languages === "object" && !Array.isArray(targetNode.languages)) {
     Object.keys(targetNode.languages).forEach(l => {
-      if (l && targetNode.languages[l]) langs.push(String(l));
+      if (l && targetNode.languages[l]) langs.push(String(l).trim());
     });
   }
 
   if (langs.length === 0) {
-    const standardLangs = ["Hindi", "English", "Japanese", "Tamil", "Telugu", "Korean", "Spanish", "Default"];
+    const standardLangs = ["Hindi", "English", "Japanese", "Tamil", "Telugu", "Korean", "Spanish"];
     standardLangs.forEach(sl => {
       if (targetNode[sl.toLowerCase()] || targetNode[sl]) {
         langs.push(sl);
@@ -143,54 +144,88 @@ function getAvailableLanguages(targetNode) {
   }
 
   if (langs.length === 0) {
-    langs.push("Hindi");
+    const qMap = getAvailableQualitiesData(targetNode);
+    if (getAnyUrl(targetNode) || Object.keys(qMap).length > 0) {
+      langs.push("Hindi");
+    }
   }
 
-  return Array.from(new Set(langs));
+  return Array.from(new Set(langs.filter(Boolean)));
+}
+
+function detectQualityFromUrl(url) {
+  if (!url || typeof url !== 'string') return null;
+  const match = url.match(/(2160p|1080p|720p|480p|360p|4k|hd|sd)/i);
+  return match ? match[0].toUpperCase() : null;
 }
 
 function getAvailableQualitiesData(targetNode, language = "") {
-  const standardOrder = ["360p", "480p", "720p", "1080p", "4K"];
   let available = {};
-
   if (!targetNode) return available;
-  let nodeToCheck = targetNode;
 
-  if (targetNode.languages && typeof targetNode.languages === "object") {
+  const sanitizeUrl = (val) => {
+    if (val && typeof val === "string" && val.trim().length > 5) return val.trim();
+    const sub = getAnyUrl(val);
+    if (sub && typeof sub === "string" && sub.trim().length > 5) return sub.trim();
+    return "";
+  };
+
+  if (targetNode.videoSources && typeof targetNode.videoSources === "object") {
+    let sourcePool = targetNode.videoSources;
+    let selectedLangNode = null;
+
+    if (language) {
+      const matchKey = Object.keys(sourcePool).find(k => k.toLowerCase() === language.toLowerCase());
+      if (matchKey) selectedLangNode = sourcePool[matchKey];
+    }
+    if (!selectedLangNode && Object.keys(sourcePool).length > 0) {
+      selectedLangNode = Object.values(sourcePool)[0];
+    }
+
+    if (selectedLangNode && typeof selectedLangNode === "object") {
+      Object.entries(selectedLangNode).forEach(([qKey, qVal]) => {
+        const cleaned = sanitizeUrl(qVal);
+        if (cleaned) {
+          available[String(qKey).trim().toUpperCase()] = cleaned;
+        }
+      });
+    }
+  }
+
+  if (Object.keys(available).length === 0 && targetNode.languages && typeof targetNode.languages === "object") {
     let matchedLangKey = Object.keys(targetNode.languages).find(k => k.toLowerCase() === (language || "").toLowerCase());
     if (!matchedLangKey && Object.keys(targetNode.languages).length > 0) {
-      matchedLangKey = Object.keys(targetNode.languages)[0]; 
+      matchedLangKey = Object.keys(targetNode.languages)[0];
     }
-    if (matchedLangKey && targetNode.languages[matchedLangKey]) {
-      nodeToCheck = targetNode.languages[matchedLangKey];
-    }
-  } else if (language && targetNode[language.toLowerCase()]) {
-    nodeToCheck = targetNode[language.toLowerCase()];
-  }
+    let nodeToCheck = matchedLangKey ? targetNode.languages[matchedLangKey] : targetNode;
 
-  let qObj = nodeToCheck.qualities || nodeToCheck.qualityMap || nodeToCheck.resolutions;
-  if (!qObj && (nodeToCheck["720p"] || nodeToCheck["1080p"] || nodeToCheck["360p"] || nodeToCheck["480p"] || nodeToCheck["4K"])) {
-    qObj = nodeToCheck;
-  }
-
-  if (qObj && typeof qObj === "object") {
-    for (let key of standardOrder) {
-      let val = getAnyUrl(qObj[key] || qObj[key.toLowerCase()] || qObj[key.toUpperCase()]);
-      if (val && typeof val === "string" && val.trim().length > 5) {
-        available[key] = val.trim();
-      }
+    if (nodeToCheck && typeof nodeToCheck === "object") {
+      Object.entries(nodeToCheck).forEach(([k, v]) => {
+        const cleaned = sanitizeUrl(v);
+        if (cleaned) available[String(k).trim().toUpperCase()] = cleaned;
+      });
+    } else {
+      const cleaned = sanitizeUrl(nodeToCheck);
+      if (cleaned) available["DEFAULT"] = cleaned;
     }
   }
 
   if (Object.keys(available).length === 0) {
-    let directUrl = getAnyUrl(nodeToCheck);
-    if (directUrl && directUrl.trim().length > 5) {
-      available["1080p"] = directUrl.trim(); 
-    } else {
-      let rootUrl = getAnyUrl(targetNode);
-      if (rootUrl && rootUrl.trim().length > 5) {
-        available["1080p"] = rootUrl.trim();
-      }
+    const subContainers = [targetNode.qualities, targetNode.qualityMap, targetNode.resolutions, targetNode.quality, targetNode.servers];
+    subContainers.forEach(container => {
+      if (!container || typeof container !== 'object') return;
+      Object.entries(container).forEach(([key, val]) => {
+        const cleaned = sanitizeUrl(val);
+        if (cleaned) available[String(key).trim().toUpperCase()] = cleaned;
+      });
+    });
+  }
+
+  if (Object.keys(available).length === 0) {
+    let directVal = getAnyUrl(targetNode);
+    if (directVal && directVal.trim().length > 5) {
+      const detected = detectQualityFromUrl(directVal) || "DEFAULT";
+      available[detected] = directVal.trim();
     }
   }
 
@@ -198,8 +233,17 @@ function getAvailableQualitiesData(targetNode, language = "") {
 }
 
 function resolveVideoUrl(targetNode, quality, language) {
+  if (!targetNode) return "";
   let qMap = getAvailableQualitiesData(targetNode, language);
-  if (qMap[quality]) return qMap[quality];
+  
+  if (quality && qMap[quality.toUpperCase()]) return qMap[quality.toUpperCase()];
+  if (quality && qMap[quality]) return qMap[quality];
+  
+  const preferredKeys = ["720P", "1080P", "480P", "360P", "4K", "DEFAULT"];
+  for (let pk of preferredKeys) {
+    if (qMap[pk]) return qMap[pk];
+  }
+
   let keys = Object.keys(qMap);
   if (keys.length > 0) {
     return qMap[keys[0]]; 
@@ -209,12 +253,14 @@ function resolveVideoUrl(targetNode, quality, language) {
 
 function findItemUniversal(id, type) {
   if (!id) return null;
+  
   if (type === 'series') {
     if (webseries[id]) return { id, type: 'series', ...webseries[id] };
     for (const pKey in platforms) {
       const p = platforms[pKey];
-      if (p && p.series && p.series[id]) {
-        return { id, type: 'series', ...p.series[id] };
+      if (p) {
+        if (p.series && p.series[id]) return { id, type: 'series', ...p.series[id] };
+        if (p.anime_series && p.anime_series[id]) return { id, type: 'series', ...p.anime_series[id] };
       }
     }
     for (const sKey in webseries) {
@@ -222,10 +268,14 @@ function findItemUniversal(id, type) {
     }
     for (const pKey in platforms) {
       const p = platforms[pKey];
-      if (p && p.series) {
-        for (const sKey in p.series) {
-          if (sKey === id || p.series[sKey]?.id === id) return { id: sKey, type: 'series', ...p.series[sKey] };
-        }
+      if (p) {
+        ['series', 'anime_series'].forEach(cat => {
+          if (p[cat]) {
+            for (const sKey in p[cat]) {
+              if (sKey === id || p[cat][sKey]?.id === id) return { id: sKey, type: 'series', ...p[cat][sKey] };
+            }
+          }
+        });
       }
     }
   } else {
@@ -290,6 +340,11 @@ function movieArray() {
         if (!list.some(x => x.id === id)) list.push({ id, type: 'movie', ...(m || {}) });
       });
     }
+    if (p && p.anime) {
+      Object.entries(p.anime).forEach(([id, a]) => {
+        if (!list.some(x => x.id === id)) list.push({ id, type: 'movie', ...(a || {}) });
+      });
+    }
   });
   return list;
 }
@@ -302,11 +357,9 @@ function webseriesArray() {
         if (!list.some(x => x.id === id)) list.push({ id, type: 'series', ...(s || {}) });
       });
     }
-  });
-  Object.values(platforms || {}).forEach(p => {
-    if (p && p.anime) {
-      Object.entries(p.anime).forEach(([id, a]) => {
-        if (!list.some(x => x.id === id)) list.push({ id, type: a.seasons ? 'series' : 'movie', ...(a || {}) });
+    if (p && p.anime_series) {
+      Object.entries(p.anime_series).forEach(([id, as]) => {
+        if (!list.some(x => x.id === id)) list.push({ id, type: 'series', ...(as || {}) });
       });
     }
   });
@@ -374,6 +427,7 @@ window.showPage = function(page) {
   isWatchSeasonDropdownOpen = false;
   isQualityMenuOpen = false;
   isLanguageMenuOpen = false;
+  isAspectMenuOpen = false;
   window.scrollTo(0, 0); 
   render();
 };
@@ -417,15 +471,13 @@ window.handleSearchInput = function(val) {
 window.setPlayerQuality = function(quality) {
   selectedQuality = quality;
   isQualityMenuOpen = false;
-  isLanguageMenuOpen = false;
-  showToast(`Quality switched to ${quality}`);
 
   let targetNode = null;
   if (selectedEpisode.type === 'series') {
     const series = findItemUniversal(selectedEpisode.id, 'series');
     if (series && series.seasons && series.seasons[selectedEpisode.seasonName]) {
       const eps = series.seasons[selectedEpisode.seasonName].episodes || {};
-      const epValues = Object.values(eps);
+      const epValues = Array.isArray(eps) ? eps : Object.values(eps);
       targetNode = epValues[selectedEpisode.episodeNumber - 1];
     }
   } else {
@@ -436,32 +488,38 @@ window.setPlayerQuality = function(quality) {
     selectedEpisode.videoUrl = resolveVideoUrl(targetNode, selectedQuality, selectedLanguage);
   }
 
-  render();
+  showToast(`Switched to ${quality}`);
+
+  const videoEl = document.getElementById("mainVideoPlayer");
+  if (videoEl && selectedEpisode.videoUrl) {
+    const currentTime = videoEl.currentTime || 0;
+    const isPlaying = !videoEl.paused;
+
+    videoEl.src = selectedEpisode.videoUrl;
+    videoEl.currentTime = currentTime;
+    videoEl.onloadedmetadata = () => {
+      videoEl.currentTime = currentTime;
+      if (isPlaying) {
+        videoEl.play().catch(() => {});
+      }
+    };
+
+    const label = document.getElementById("selectedQualityLabel");
+    if (label) {
+      label.innerHTML = `<i class="fa-solid fa-sliders text-[9px]"></i> ${esc(selectedQuality)}`;
+    }
+
+    const qMenu = document.getElementById("qualityMenuDropdown");
+    if (qMenu) qMenu.remove();
+  } else {
+    render();
+  }
 };
 
 window.toggleQualityMenu = function() {
-  let targetNode = null;
-  if (selectedEpisode.type === 'series') {
-    const series = findItemUniversal(selectedEpisode.id, 'series');
-    if (series && series.seasons && series.seasons[selectedEpisode.seasonName]) {
-      const eps = series.seasons[selectedEpisode.seasonName].episodes || {};
-      const epValues = Object.values(eps);
-      targetNode = epValues[selectedEpisode.episodeNumber - 1];
-    }
-  } else {
-    targetNode = findItemUniversal(selectedEpisode.id, 'movie');
-  }
-
-  const qMap = getAvailableQualitiesData(targetNode, selectedLanguage);
-  const qKeys = Object.keys(qMap);
-
-  if (qKeys.length <= 1) {
-    showToast(`Current Quality: ${qKeys[0] || selectedQuality || '1080p'}`);
-    return;
-  }
-
   isQualityMenuOpen = !isQualityMenuOpen;
   isLanguageMenuOpen = false;
+  isAspectMenuOpen = false;
   render();
 };
 
@@ -469,14 +527,15 @@ window.setPlayerLanguage = function(lang) {
   selectedLanguage = lang;
   isLanguageMenuOpen = false;
   isQualityMenuOpen = false;
-  showToast(`Language switched to ${lang}`);
+  isAspectMenuOpen = false;
+  showToast(`Language: ${lang}`);
 
   let targetNode = null;
   if (selectedEpisode.type === 'series') {
     const series = findItemUniversal(selectedEpisode.id, 'series');
     if (series && series.seasons && series.seasons[selectedEpisode.seasonName]) {
       const eps = series.seasons[selectedEpisode.seasonName].episodes || {};
-      const epValues = Object.values(eps);
+      const epValues = Array.isArray(eps) ? eps : Object.values(eps);
       targetNode = epValues[selectedEpisode.episodeNumber - 1];
     }
   } else {
@@ -487,20 +546,110 @@ window.setPlayerLanguage = function(lang) {
     const qMap = getAvailableQualitiesData(targetNode, selectedLanguage);
     const qKeys = Object.keys(qMap);
     if (qKeys.length > 0) {
-      if (!qMap[selectedQuality]) {
-        selectedQuality = qKeys[qKeys.length - 1];
-      }
+      selectedQuality = qKeys[0]; 
       selectedEpisode.videoUrl = qMap[selectedQuality];
+    } else {
+      selectedQuality = "";
+      selectedEpisode.videoUrl = resolveVideoUrl(targetNode, "", selectedLanguage);
     }
   }
 
-  render();
+  const videoEl = document.getElementById("mainVideoPlayer");
+  if (videoEl && selectedEpisode.videoUrl) {
+    const currentTime = videoEl.currentTime || 0;
+    const isPlaying = !videoEl.paused;
+
+    videoEl.src = selectedEpisode.videoUrl;
+    videoEl.currentTime = currentTime;
+    videoEl.onloadedmetadata = () => {
+      videoEl.currentTime = currentTime;
+      if (isPlaying) {
+        videoEl.play().catch(() => {});
+      }
+    };
+
+    render();
+  } else {
+    render();
+  }
 };
 
 window.toggleLanguageMenu = function() {
   isLanguageMenuOpen = !isLanguageMenuOpen;
   isQualityMenuOpen = false;
+  isAspectMenuOpen = false;
   render();
+};
+
+window.toggleAspectMenu = function() {
+  isAspectMenuOpen = !isAspectMenuOpen;
+  isQualityMenuOpen = false;
+  isLanguageMenuOpen = false;
+  render();
+};
+
+window.setVideoAspect = function(fitStyle, label) {
+  currentAspectFit = fitStyle;
+  currentAspectLabel = label;
+  currentCustomAspect = "";
+  isAspectMenuOpen = false;
+  showToast(`Aspect: ${label}`);
+  
+  const videoEl = document.getElementById("mainVideoPlayer");
+  if (videoEl) {
+    videoEl.style.objectFit = fitStyle;
+    videoEl.style.aspectRatio = "";
+    const menu = document.getElementById("aspectMenuDropdown");
+    if (menu) menu.remove();
+  } else {
+    render();
+  }
+};
+
+window.setCustomVideoAspect = function() {
+  let input = prompt("Enter custom aspect ratio (e.g. 16:9, 4:3):", "4:3");
+  if (!input) return;
+  
+  let parts = input.trim().split(":");
+  if (parts.length === 2) {
+    let w = parseFloat(parts[0]);
+    let h = parseFloat(parts[1]);
+    if (w > 0 && h > 0) {
+      let ratioVal = w / h;
+      currentAspectFit = "fill";
+      currentAspectLabel = "Custom (" + input.trim() + ")";
+      currentCustomAspect = ratioVal;
+      isAspectMenuOpen = false;
+      showToast(`Custom Ratio Set: ${input.trim()}`);
+      
+      const videoEl = document.getElementById("mainVideoPlayer");
+      if (videoEl) {
+        videoEl.style.objectFit = "fill";
+        videoEl.style.aspectRatio = ratioVal;
+      } else {
+        render();
+      }
+    }
+  }
+};
+
+window.toggleVideoFullscreen = function() {
+  const containerEl = document.getElementById("videoContainerWrapper") || document.getElementById("mainVideoPlayer");
+  if (!containerEl) return;
+  
+  if (!document.fullscreenElement && !document.webkitFullscreenElement) {
+    if (containerEl.requestFullscreen) {
+      containerEl.requestFullscreen().catch(() => {});
+    } else if (containerEl.webkitRequestFullscreen) {
+      containerEl.webkitRequestFullscreen();
+    }
+  } else {
+    if (document.exitFullscreen) {
+      document.exitFullscreen().catch(() => {});
+    } else if (document.webkitExitFullscreen) {
+      document.webkitExitFullscreen();
+    }
+  }
 };
 
 function getSearchResultsHTML(query) {
@@ -542,6 +691,7 @@ window.openDetail = function(id, type) {
   isWatchSeasonDropdownOpen = false;
   isQualityMenuOpen = false;
   isLanguageMenuOpen = false;
+  isAspectMenuOpen = false;
   
   let item = findItemUniversal(id, type);
   if (!item) {
@@ -607,7 +757,13 @@ window.toggleSaveItem = function(id, type, title, posterUrl) {
   if (index > -1) { savedItems.splice(index, 1); } 
   else { savedItems.push({ id, type, title, posterUrl }); }
   localStorage.setItem("xeon_saved_items", JSON.stringify(savedItems));
-  render();
+  
+  const isSaved = savedItems.some(i => i.id === id);
+  const btn = document.getElementById("saveBtn");
+  if (btn) {
+    btn.className = `${isSaved ? 'bg-cyan-500 text-black' : 'bg-white/10 text-white'} px-3.5 py-1.5 rounded-full text-xs font-bold flex items-center gap-1.5 transition whitespace-nowrap`;
+    btn.innerHTML = `<i class="fa-solid ${isSaved ? 'fa-check' : 'fa-bookmark'} text-[10px]"></i> ${isSaved ? 'Saved' : 'Save'}`;
+  }
 };
 
 window.toggleLikeItem = function(id, type, title, posterUrl) {
@@ -615,28 +771,39 @@ window.toggleLikeItem = function(id, type, title, posterUrl) {
   if (index > -1) { likedItems.splice(index, 1); } 
   else { likedItems.push({ id, type, title, posterUrl }); }
   localStorage.setItem("xeon_liked_items", JSON.stringify(likedItems));
-  render();
+  
+  const isLiked = likedItems.some(i => i.id === id);
+  const btn = document.getElementById("likeBtn");
+  if (btn) {
+    btn.className = `${isLiked ? 'bg-cyan-500 text-black' : 'bg-white/10 text-white'} px-3.5 py-1.5 rounded-full text-xs font-bold flex items-center gap-1.5 transition whitespace-nowrap`;
+    btn.innerHTML = `<i class="fa-solid ${isLiked ? 'fa-check' : 'fa-heart'} text-[10px]"></i> ${isLiked ? 'Liked' : 'Like'}`;
+  }
 };
 
 window.handleDownload = function(id, type, title, posterUrl, videoUrl) {
-  if (!videoUrl) {
+  let finalUrl = videoUrl;
+  if (!finalUrl) {
+    const item = findItemUniversal(id, type);
+    if (item) finalUrl = resolveVideoUrl(item, selectedQuality, selectedLanguage);
+  }
+  if (!finalUrl) {
     showToast("Download link not available!");
     return;
   }
   const a = document.createElement('a');
-  a.href = videoUrl;
-  a.download = title || 'video';
+  a.href = finalUrl;
+  a.download = (title || 'video').replace(/[^\w\s.-]/g, '') + '.mp4';
   a.target = '_blank';
+  a.rel = 'noopener';
   document.body.appendChild(a);
   a.click();
   document.body.removeChild(a);
 
   if (!downloadedItems.some(i => i.id === id && i.title === title)) {
-    downloadedItems.push({ id, type, title, posterUrl, videoUrl });
+    downloadedItems.push({ id, type, title, posterUrl, videoUrl: finalUrl });
     localStorage.setItem("xeon_downloaded_items", JSON.stringify(downloadedItems));
   }
-  showToast("Download start in files, check notification");
-  render();
+  showToast("Download started");
 };
 
 window.removeDownloadItem = function(id, title) {
@@ -661,7 +828,10 @@ window.selectWatchSeason = function(sKey) {
   
   const series = findItemUniversal(selectedEpisode.id, 'series');
   if (series && series.seasons && series.seasons[sKey] && series.seasons[sKey].episodes) {
-    const epEntries = Object.entries(series.seasons[sKey].episodes);
+    const epEntries = Array.isArray(series.seasons[sKey].episodes) 
+      ? series.seasons[sKey].episodes.map((ep, i) => [String(i), ep])
+      : Object.entries(series.seasons[sKey].episodes);
+      
     if (epEntries.length > 0) {
       const [firstKey, firstEp] = epEntries[0];
       const langs = getAvailableLanguages(firstEp);
@@ -670,10 +840,11 @@ window.selectWatchSeason = function(sKey) {
       const qMap = getAvailableQualitiesData(firstEp, selectedLanguage);
       const qKeys = Object.keys(qMap);
       if (qKeys.length > 0) {
-        selectedQuality = qKeys[qKeys.length - 1]; 
+        selectedQuality = qKeys[0]; 
         selectedEpisode.videoUrl = qMap[selectedQuality];
       } else {
-        selectedEpisode.videoUrl = getAnyUrl(firstEp);
+        selectedQuality = "";
+        selectedEpisode.videoUrl = resolveVideoUrl(firstEp, "", selectedLanguage);
       }
       selectedEpisode.title = firstEp.title || "Episode 1";
       selectedEpisode.episodeNumber = 1;
@@ -687,26 +858,33 @@ window.toggleWatchSeasonDropdown = function() {
   render();
 };
 
-window.toggleVideoFullscreen = function() {
-  const videoEl = document.getElementById("mainVideoPlayer");
-  if (!videoEl) return;
-  if (videoEl.requestFullscreen) { videoEl.requestFullscreen(); } 
-  else if (videoEl.webkitRequestFullscreen) { videoEl.webkitRequestFullscreen(); } 
-  else if (videoEl.msRequestFullscreen) { videoEl.msRequestFullscreen(); }
-};
+window.playSpecificEpisodeByIndex = function(seasonName, epNum) {
+  const series = findItemUniversal(selectedEpisode.id, 'series');
+  if (!series || !series.seasons || !series.seasons[seasonName]) {
+    showToast("Episode not found");
+    return;
+  }
+  const eps = series.seasons[seasonName].episodes || {};
+  const epEntries = Array.isArray(eps) ? eps.map((ep, i) => [String(i), ep]) : Object.entries(eps);
+  const target = epEntries[epNum - 1];
+  if (!target) {
+    showToast("Episode not found");
+    return;
+  }
+  const [epKey, epNode] = target;
+  const epTitle = epNode.title || `Episode ${epNum}`;
 
-window.playSpecificEpisode = function(epNodeOrUrl, epTitle, seasonName, epNum) {
-  let targetNode = epNodeOrUrl;
-  const langs = getAvailableLanguages(targetNode);
+  const langs = getAvailableLanguages(epNode);
   selectedLanguage = langs[0] || "Hindi";
 
-  const qMap = getAvailableQualitiesData(targetNode, selectedLanguage);
+  const qMap = getAvailableQualitiesData(epNode, selectedLanguage);
   const qKeys = Object.keys(qMap);
   if (qKeys.length > 0) {
-    selectedQuality = qKeys[qKeys.length - 1];
+    selectedQuality = qKeys[0];
     selectedEpisode.videoUrl = qMap[selectedQuality];
   } else {
-    selectedEpisode.videoUrl = getAnyUrl(targetNode);
+    selectedQuality = "";
+    selectedEpisode.videoUrl = resolveVideoUrl(epNode, "", selectedLanguage);
   }
 
   selectedEpisode.title = epTitle;
@@ -731,12 +909,11 @@ window.playNextEpisode = function() {
   if (!series || !series.seasons || !series.seasons[selectedEpisode.seasonName]) return;
   
   const episodesObj = series.seasons[selectedEpisode.seasonName].episodes || {};
-  const epEntries = Object.entries(episodesObj);
+  const totalEps = Array.isArray(episodesObj) ? episodesObj.length : Object.keys(episodesObj).length;
   const nextIndex = selectedEpisode.episodeNumber; 
   
-  if (nextIndex < epEntries.length) {
-    const [nextKey, nextEp] = epEntries[nextIndex];
-    window.playSpecificEpisode(nextEp, nextEp.title || `Episode ${nextIndex + 1}`, selectedEpisode.seasonName, nextIndex + 1);
+  if (nextIndex < totalEps) {
+    window.playSpecificEpisodeByIndex(selectedEpisode.seasonName, nextIndex + 1);
   } else {
     showToast("You have reached the last episode of this season!");
   }
@@ -749,6 +926,7 @@ window.openWatchScreen = function(id, type, episodeNode = null, epTitle = "", se
   isWatchSeasonDropdownOpen = false;
   isQualityMenuOpen = false;
   isLanguageMenuOpen = false;
+  isAspectMenuOpen = false;
 
   let targetNode = episodeNode;
 
@@ -760,16 +938,19 @@ window.openWatchScreen = function(id, type, episodeNode = null, epTitle = "", se
       if (!selectedSeasonKey || !mediaObj.seasons[selectedSeasonKey]) {
         selectedSeasonKey = sKeys[0] || "season_1";
       }
-      targetSeason = selectedSeasonKey;
+      targetSeason = selectedSeasonKey || seasonName || sKeys[0];
       if (!targetNode) {
         const activeSeason = mediaObj.seasons[targetSeason];
         if (activeSeason && activeSeason.episodes) {
-          const epEntries = Object.entries(activeSeason.episodes);
-          const [firstEpKey, firstEp] = epEntries[0] || [];
+          const epEntries = Array.isArray(activeSeason.episodes) 
+            ? activeSeason.episodes.map((ep, i) => [String(i), ep])
+            : Object.entries(activeSeason.episodes);
+          const idx = Math.max(0, (episodeNumber || 1) - 1);
+          const [epKey, firstEp] = epEntries[idx] || epEntries[0] || [];
           if (firstEp) {
             targetNode = firstEp;
-            targetTitle = firstEp.title || "Episode 1";
-            targetEpNum = 1;
+            targetTitle = firstEp.title || `Episode ${idx + 1}`;
+            targetEpNum = idx + 1;
           }
         }
       }
@@ -781,11 +962,7 @@ window.openWatchScreen = function(id, type, episodeNode = null, epTitle = "", se
 
     const qMap = getAvailableQualitiesData(checkNode, selectedLanguage);
     const qKeys = Object.keys(qMap);
-    if (qKeys.length > 0) {
-      selectedQuality = qKeys[qKeys.length - 1]; 
-    } else {
-      selectedQuality = "1080p";
-    }
+    selectedQuality = qKeys[0] || "";
 
     selectedEpisode = { 
       id: id, type: 'series', 
@@ -806,11 +983,7 @@ window.openWatchScreen = function(id, type, episodeNode = null, epTitle = "", se
 
     const qMap = getAvailableQualitiesData(movieNode, selectedLanguage);
     const qKeys = Object.keys(qMap);
-    if (qKeys.length > 0) {
-      selectedQuality = qKeys[qKeys.length - 1];
-    } else {
-      selectedQuality = "1080p";
-    }
+    selectedQuality = qKeys[0] || "";
 
     selectedEpisode = { 
       id: id, type: 'movie', 
@@ -902,6 +1075,14 @@ function updateHeroBannerDOM(bannersList) {
 function render() {
   if (!appEl) return;
   
+  let savedCurrentTime = 0;
+  let wasPlaying = false;
+  const existingVideo = document.getElementById("mainVideoPlayer");
+  if (currentPage === 'watch' && existingVideo) {
+    savedCurrentTime = existingVideo.currentTime || 0;
+    wasPlaying = !existingVideo.paused;
+  }
+
   if (bottomNavEl) {
     bottomNavEl.innerHTML = `
       <div onclick="window.showPage('home')" class="flex flex-col items-center justify-center cursor-pointer ${currentPage === 'home' ? 'text-cyan-400' : 'text-slate-400'}">
@@ -963,17 +1144,24 @@ function render() {
     
     appEl.innerHTML = `
       <div>
-        <!-- Updated Header with XeonMovies left, unique black 'under development...' in middle, and Download App button on right -->
-        <div class="flex items-center justify-between px-4 py-3">
-          <h1 class="text-xs md:text-sm font-black text-cyan-400 tracking-wide">XeonMovies</h1>
-          <span class="text-[10px] md:text-xs font-extrabold text-black bg-cyan-400 px-2.5 py-1 rounded-md tracking-wider uppercase shadow-sm border border-cyan-300">under development...</span>
-          <div class="flex items-center gap-2">
-            <button onclick="window.downloadOfficialApp()" class="bg-gradient-to-r from-cyan-500/20 to-blue-600/20 border border-cyan-500/30 text-cyan-400 px-2.5 py-1.5 rounded-xl text-[10px] font-black flex items-center gap-1.5 shadow-md transition hover:bg-cyan-500/30">
-              <i class="fa-solid fa-mobile-screen-button text-[10px]"></i>
-              <span>Download App</span>
-            </button>
-            <button onclick="window.goToSearchPage()" class="w-8 h-8 rounded-full bg-white/10 flex items-center justify-center text-white hover:bg-white/20 transition">
-              <i class="fa-solid fa-magnifying-glass text-xs"></i>
+        <div class="flex items-center justify-between px-3 py-3 bg-[#0b0f19]/90 sticky top-0 z-30 backdrop-blur-md border-b border-white/5 gap-2">
+          <div class="flex items-center gap-1.5 min-w-0">
+            <div class="w-7 h-7 rounded-xl bg-gradient-to-tr from-cyan-600 to-blue-500 flex items-center justify-center shadow-lg shadow-cyan-500/20 flex-shrink-0">
+              <i class="fa-solid fa-play text-white text-[10px]"></i>
+            </div>
+            <h1 class="text-xs font-black tracking-wider text-white truncate">Xeon<span class="text-cyan-400">Movies</span></h1>
+          </div>
+
+          <div class="bg-cyan-500/15 border border-cyan-500/30 text-cyan-300 text-[9px] font-black tracking-wider px-2 py-1 rounded-lg uppercase whitespace-nowrap">
+            UNDER DEVELOPMENT...
+          </div>
+
+          <div class="flex items-center gap-1.5 flex-shrink-0">
+            <a href="https://moviesallwatchdowanload-web.github.io/Xeonmovies/" target="_blank" rel="noopener noreferrer" class="bg-cyan-500/20 hover:bg-cyan-500/30 border border-cyan-500/40 text-cyan-300 px-2.5 py-1.5 rounded-xl text-[10px] font-bold flex items-center gap-1 transition">
+              <i class="fa-solid fa-download text-[9px]"></i> Download App
+            </a>
+            <button onclick="window.goToSearchPage()" class="w-7 h-7 rounded-full bg-white/10 flex items-center justify-center text-white hover:bg-white/20 transition flex-shrink-0">
+              <i class="fa-solid fa-magnifying-glass text-[10px]"></i>
             </button>
           </div>
         </div>
@@ -1015,14 +1203,22 @@ function render() {
           <div class="mb-6">
             <h2 class="text-xs font-bold text-slate-400 tracking-wider mb-3">FAMOUS PLATFORMS</h2>
             <div class="flex gap-4 overflow-x-auto pb-2">
-              ${pList.length > 0 ? pList.map(p => `
-                <div onclick="window.openPlatformPage('${esc(p.id)}')" class="flex flex-col items-center flex-shrink-0 cursor-pointer">
-                  <div class="w-14 h-14 rounded-full bg-slate-800 border border-white/10 flex items-center justify-center overflow-hidden mb-1 shadow-md hover:scale-105 transition">
-                    ${p.iconUrl || p.imageUrl ? `<img src="${esc(p.iconUrl || p.imageUrl)}" class="w-full h-full object-cover">` : `<span class="text-xs font-bold text-cyan-400">${esc(p.name?.[0] || 'P')}</span>`}
+              ${pList.length > 0 ? pList.map(p => {
+                const logoImg = p.logoUrl || p.iconUrl || p.imageUrl || '';
+                return `
+                <div onclick="window.openPlatformPage('${esc(p.id)}')" class="flex flex-col items-center flex-shrink-0 cursor-pointer group">
+                  <div class="w-14 h-14 rounded-full bg-slate-900 border-2 border-white/10 group-hover:border-cyan-400 flex items-center justify-center overflow-hidden mb-1.5 shadow-lg group-hover:scale-105 transition-all duration-200 relative">
+                    ${logoImg ? `
+                      <img src="${esc(logoImg)}" alt="${esc(p.name || 'Platform')}" class="w-full h-full object-cover rounded-full">
+                    ` : `
+                      <div class="w-full h-full rounded-full bg-gradient-to-tr from-cyan-600 to-blue-600 flex items-center justify-center">
+                        <span class="text-sm font-black text-white uppercase">${esc((p.name || 'P')[0])}</span>
+                      </div>
+                    `}
                   </div>
-                  <span class="text-[11px] text-slate-300 truncate w-16 text-center">${esc(p.name || p.title)}</span>
+                  <span class="text-[11px] text-slate-300 font-medium truncate w-16 text-center group-hover:text-cyan-400 transition-colors">${esc(p.name || p.title)}</span>
                 </div>
-              `).join('') : '<p class="text-xs text-slate-500">No platforms added.</p>'}
+              `;}).join('') : '<p class="text-xs text-slate-500">No platforms added.</p>'}
             </div>
           </div>
 
@@ -1057,17 +1253,20 @@ function render() {
   } else if (currentPage === 'platform') {
     const platformObj = platforms[currentPlatformId] || {};
     const platformName = platformObj.name || platformObj.title || "Platform";
+    const platformLogo = platformObj.logoUrl || platformObj.iconUrl || platformObj.imageUrl || '';
 
     const pMoviesObj = platformObj.movies || {};
     const pSeriesObj = platformObj.series || {};
     const pAnimeObj = platformObj.anime || {};
+    const pAnimeSeriesObj = platformObj.anime_series || {};
 
     const pMoviesList = Object.entries(pMoviesObj).map(([id, m]) => ({ id, type: 'movie', ...(m || {}) })).filter(m => !isAnimeItem(m));
     const pSeriesList = Object.entries(pSeriesObj).map(([id, s]) => ({ id, type: 'series', ...(s || {}) })).filter(s => !isAnimeItem(s));
     const pAnimeList = [
       ...Object.entries(pMoviesObj).map(([id, m]) => ({ id, type: 'movie', ...(m || {}) })).filter(m => isAnimeItem(m)),
       ...Object.entries(pSeriesObj).map(([id, s]) => ({ id, type: 'series', ...(s || {}) })).filter(s => isAnimeItem(s)),
-      ...Object.entries(pAnimeObj).map(([id, a]) => ({ id, type: a.seasons ? 'series' : 'movie', ...(a || {}) }))
+      ...Object.entries(pAnimeObj).map(([id, a]) => ({ id, type: 'movie', ...(a || {}) })),
+      ...Object.entries(pAnimeSeriesObj).map(([id, a]) => ({ id, type: 'series', ...(a || {}) }))
     ];
 
     appEl.innerHTML = `
@@ -1075,7 +1274,14 @@ function render() {
         <div class="flex items-center justify-between mb-4">
           <div class="flex items-center gap-3">
             <button onclick="window.showPage('home')" class="text-white text-base hover:text-cyan-400 transition"><i class="fa-solid fa-arrow-left"></i></button>
-            <h1 class="text-lg font-black text-white">${esc(platformName)}</h1>
+            <div class="flex items-center gap-2">
+              ${platformLogo ? `
+                <div class="w-8 h-8 rounded-full overflow-hidden border border-white/20">
+                  <img src="${esc(platformLogo)}" class="w-full h-full object-cover">
+                </div>
+              ` : ''}
+              <h1 class="text-lg font-black text-white">${esc(platformName)}</h1>
+            </div>
           </div>
           <button onclick="window.goToSearchPage()" class="w-8 h-8 rounded-full bg-white/10 flex items-center justify-center text-white hover:bg-white/20 transition">
             <i class="fa-solid fa-magnifying-glass text-xs"></i>
@@ -1119,7 +1325,7 @@ function render() {
         ` : `
           <div class="grid grid-cols-2 gap-3">
             ${pAnimeList.length > 0 ? pAnimeList.map(a => `
-              <div onclick="window.openDetail('${esc(a.id)}', '${esc(a.type || 'movie')}')" class="bg-slate-900 rounded-xl p-2 cursor-pointer border border-white/5 flex flex-col justify-between">
+              <div onclick="window.openDetail('${esc(a.id)}', '${esc(a.type || 'movie')}');" class="bg-slate-900 rounded-xl p-2 cursor-pointer border border-white/5 flex flex-col justify-between">
                 <div>
                   <img src="${esc(a.posterUrl || a.imageUrl)}" class="w-full aspect-[2/3] object-cover rounded-lg mb-2">
                   <h3 class="text-xs font-bold truncate">${esc(a.title || a.name)}</h3>
@@ -1202,7 +1408,7 @@ function render() {
                   <h3 class="text-xs font-bold truncate">${esc(item.title)}</h3>
                   <p class="text-[10px] text-cyan-400 mt-0.5">Downloaded in files</p>
                 </div>
-                <button onclick="window.removeDownloadItem('${esc(item.id)}', '${esc(item.title)}')" class="mt-2 w-full bg-red-500/10 hover:bg-red-500/20 text-red-400 py-1.5 rounded-lg text-[11px] font-bold transition flex items-center justify-center gap-1.5 border border-red-500/20">
+                <button onclick="window.removeDownloadItem('${esc(item.id)}', '${esc(item.title)}');" class="mt-2 w-full bg-red-500/10 hover:bg-red-500/20 text-red-400 py-1.5 rounded-lg text-[11px] font-bold transition flex items-center justify-center gap-1.5 border border-red-500/20">
                   <i class="fa-solid fa-trash text-[10px]"></i> Remove
                 </button>
               </div>
@@ -1258,7 +1464,6 @@ function render() {
     const allItemsPool = [...animeMoviesArray(), ...animeWebseriesArray(), ...nonAnimeMoviesArray(), ...nonAnimeWebseriesArray()];
     const allOtherItems = allItemsPool.filter(i => i.id !== item.id);
 
-    const itemUrl = getAnyUrl(item);
     const trailerUrl = getTrailerUrl(item);
 
     if (isSeries && item.seasons) {
@@ -1298,12 +1503,12 @@ function render() {
           <div class="flex items-center gap-3 mb-4">
             <span class="text-xs bg-amber-500 text-black px-2 py-0.5 rounded font-bold"><i class="fa-solid fa-star text-[10px]"></i> ${esc(item.rating || '6.5')}</span>
             <span class="text-xs text-slate-300 font-bold">${esc(item.year || '2019')}</span>
-            ${item.genre ? `<span class="text-xs text-cyan-400 font-semibold">• ${esc(item.genre)}</span>` : ''}
+            ${item.genre || item.category ? `<span class="text-xs text-cyan-400 font-semibold">• ${esc(item.genre || item.category)}</span>` : ''}
           </div>
 
           <div class="mb-4">
             <h3 class="text-xs font-bold text-slate-400 tracking-wider mb-1">STORYLINE</h3>
-            <p class="text-xs text-slate-300 leading-relaxed">${esc(item.description || item.plot || 'Test storyline')}</p>
+            <p class="text-xs text-slate-300 leading-relaxed">${esc(item.description || item.plot || 'Storyline')}</p>
           </div>
 
           ${isSeries ? `
@@ -1324,10 +1529,13 @@ function render() {
                   ${(() => {
                     let activeSeason = item.seasons[selectedSeasonKey] || Object.values(item.seasons)[0];
                     if (!activeSeason || !activeSeason.episodes) return '<p class="text-xs text-slate-500">No episodes found.</p>';
-                    return Object.entries(activeSeason.episodes).map(([epKey, ep], idx) => {
+                    const epList = Array.isArray(activeSeason.episodes) 
+                      ? activeSeason.episodes.map((ep, i) => [String(i), ep])
+                      : Object.entries(activeSeason.episodes);
+                    return epList.map(([epKey, ep], idx) => {
                       let epTitle = ep.title || `Episode ${idx + 1}`;
                       return `
-                        <div onclick="window.openWatchScreen('${esc(item.id)}', 'series', ${JSON.stringify(ep).replace(/"/g, '&quot;')}, '${esc(epTitle)}', '${esc(selectedSeasonKey)}', ${idx + 1})" class="bg-[#121826] border border-white/5 p-3 rounded-xl flex items-center justify-between cursor-pointer hover:bg-white/5 transition">
+                        <div onclick="window.openWatchScreen('${esc(item.id)}', 'series', null, '${esc(epTitle)}', '${esc(selectedSeasonKey)}', ${idx + 1})" class="bg-[#121826] border border-white/5 p-3 rounded-xl flex items-center justify-between cursor-pointer hover:bg-white/5 transition">
                           <div class="flex items-center gap-3">
                             <div class="w-8 h-8 rounded-lg bg-cyan-500/10 text-cyan-400 flex items-center justify-center font-bold text-xs">
                               <i class="fa-solid fa-play"></i>
@@ -1344,23 +1552,21 @@ function render() {
                   })()}
                 </div>
               ` : `
-                ${itemUrl ? `
-                  <div onclick="window.openWatchScreen('${esc(item.id)}', 'series', ${JSON.stringify(item).replace(/"/g, '&quot;')}, '${esc(title)}', 'Season 1', 1)" class="bg-[#121826] border border-white/5 p-3 rounded-xl flex items-center justify-between cursor-pointer hover:bg-white/5 transition mb-3">
-                    <div class="flex items-center gap-3">
-                      <div class="w-8 h-8 rounded-lg bg-cyan-500/10 text-cyan-400 flex items-center justify-center font-bold text-xs"><i class="fa-solid fa-play"></i></div>
-                      <div>
-                        <h4 class="text-xs font-bold text-white">${esc(title)}</h4>
-                        <p class="text-[10px] text-slate-400">Direct Play / Watch URL</p>
-                      </div>
+                <div onclick="window.openWatchScreen('${esc(item.id)}', 'series', null, '${esc(title)}', 'Season 1', 1)" class="bg-[#121826] border border-white/5 p-3 rounded-xl flex items-center justify-between cursor-pointer hover:bg-white/5 transition mb-3">
+                  <div class="flex items-center gap-3">
+                    <div class="w-8 h-8 rounded-lg bg-cyan-500/10 text-cyan-400 flex items-center justify-center font-bold text-xs"><i class="fa-solid fa-play"></i></div>
+                    <div>
+                      <h4 class="text-xs font-bold text-white">${esc(title)}</h4>
+                      <p class="text-[10px] text-slate-400">Direct Play / Watch</p>
                     </div>
-                    <span class="text-[11px] text-cyan-400 font-bold">Play</span>
                   </div>
-                ` : '<p class="text-xs text-slate-500">No seasons or episodes available.</p>'}
+                  <span class="text-[11px] text-cyan-400 font-bold">Play</span>
+                </div>
               `}
             </div>
           ` : `
             <div class="fixed bottom-20 right-6 z-30 flex gap-2">
-              <button onclick="window.handleDownload('${esc(item.id)}', 'movie', '${esc(title)}', '${esc(poster)}', '${esc(itemUrl)}')" class="bg-white/10 backdrop-blur-md text-white px-4 py-3 rounded-full text-xs font-black uppercase tracking-wider flex items-center gap-2 shadow-2xl hover:bg-white/20 transition">
+              <button onclick="window.handleDownload('${esc(item.id)}', 'movie', '${esc(title)}', '${esc(poster)}', '')" class="bg-white/10 backdrop-blur-md text-white px-4 py-3 rounded-full text-xs font-black uppercase tracking-wider flex items-center gap-2 shadow-2xl hover:bg-white/20 transition">
                 <i class="fa-solid fa-download text-xs"></i> Download
               </button>
               <button onclick="window.openWatchScreen('${esc(item.id)}', 'movie')" class="bg-gradient-to-r from-cyan-500 to-blue-600 text-white px-6 py-3 rounded-full text-xs font-black uppercase tracking-wider flex items-center gap-2 shadow-2xl shadow-cyan-500/30 hover:opacity-95 transition">
@@ -1374,7 +1580,7 @@ function render() {
               <i class="fa-solid fa-fire text-xs"></i> You May Also Like
             </h3>
             <div class="grid grid-cols-2 gap-3">
-              ${allOtherItems.length > 0 ? allOtherItems.map(oth => `
+              ${allOtherItems.length > 0 ? allOtherItems.slice(0, 4).map(oth => `
                 <div onclick="window.openDetail('${esc(oth.id)}', '${esc(oth.type || 'movie')}');" class="bg-slate-900 rounded-xl p-2 cursor-pointer border border-white/5">
                   <img src="${esc(oth.posterUrl || oth.imageUrl)}" class="w-full aspect-[2/3] object-cover rounded-lg mb-2">
                   <h3 class="text-xs font-bold truncate">${esc(oth.title || oth.name)}</h3>
@@ -1474,20 +1680,22 @@ function render() {
     let activeQualityNode = mediaItem;
     if (selectedEpisode.type === 'series' && seriesObj && seriesObj.seasons && seriesObj.seasons[selectedEpisode.seasonName]) {
       const eps = seriesObj.seasons[selectedEpisode.seasonName].episodes || {};
-      const epValues = Object.values(eps);
+      const epValues = Array.isArray(eps) ? eps : Object.values(eps);
       activeQualityNode = epValues[selectedEpisode.episodeNumber - 1] || mediaItem;
     }
 
     const availableLangs = getAvailableLanguages(activeQualityNode);
-    if (!selectedLanguage || !availableLangs.includes(selectedLanguage)) {
-      selectedLanguage = availableLangs[0] || "Hindi";
+    if (availableLangs.length > 0 && (!selectedLanguage || !availableLangs.includes(selectedLanguage))) {
+      selectedLanguage = availableLangs[0];
     }
 
     const availableQualitiesMap = getAvailableQualitiesData(activeQualityNode, selectedLanguage);
     const availableQualitiesKeys = Object.keys(availableQualitiesMap);
     
-    if (!selectedQuality || !availableQualitiesMap[selectedQuality]) {
-      selectedQuality = availableQualitiesKeys[availableQualitiesKeys.length - 1] || "1080p";
+    if (availableQualitiesKeys.length > 0 && (!selectedQuality || !availableQualitiesMap[selectedQuality.toUpperCase()])) {
+      selectedQuality = availableQualitiesKeys[0];
+    } else if (availableQualitiesKeys.length === 0) {
+      selectedQuality = "";
     }
 
     selectedEpisode.videoUrl = resolveVideoUrl(activeQualityNode, selectedQuality, selectedLanguage);
@@ -1498,22 +1706,91 @@ function render() {
     }
 
     appEl.innerHTML = `
-      <div class="relative">
+      <div class="relative" id="videoContainerWrapper">
         <div class="flex items-center justify-between px-4 py-3 bg-[#121826]/90 sticky top-0 z-50 backdrop-blur-md">
           <button onclick="window.openDetail('${esc(selectedEpisode.id)}', '${esc(selectedEpisode.type)}')" class="text-white text-sm flex items-center gap-2">
             <i class="fa-solid fa-arrow-left"></i>
           </button>
-          <span class="text-xs font-black text-white tracking-wide truncate max-w-[150px]">${esc(displayHeaderTitle)}</span>
-          <div class="items-center gap-2.5 flex relative">
+          <span class="text-xs font-black text-white tracking-wide truncate max-w-[130px]">${esc(displayHeaderTitle)}</span>
+          <div class="items-center gap-2 flex relative">
             
-            <button onclick="window.toggleVideoFullscreen()" class="text-white/80 px-1" title="Fullscreen"><i class="fa-solid fa-expand text-xs"></i></button>
+            ${availableLangs.length > 0 ? `
+              <div class="relative">
+                <button onclick="window.toggleLanguageMenu()" class="text-amber-400 font-bold text-[10px] bg-amber-500/10 border border-amber-500/30 px-2 py-1 rounded-lg flex items-center gap-1 transition">
+                  <i class="fa-solid fa-globe text-[9px]"></i> ${esc(selectedLanguage || availableLangs[0])}
+                </button>
 
+                ${isLanguageMenuOpen ? `
+                  <div class="absolute right-0 top-10 bg-[#121826] border border-white/15 rounded-xl shadow-2xl py-2 z-50 min-w-[130px] backdrop-blur-xl">
+                    <div class="px-3 py-1 text-[10px] font-bold text-slate-400 border-b border-white/10 mb-1">Audio / Language</div>
+                    ${availableLangs.map(lang => `
+                      <div onclick="window.setPlayerLanguage('${esc(lang)}')" class="px-4 py-2 text-xs text-white hover:bg-cyan-500/20 cursor-pointer transition flex items-center justify-between ${selectedLanguage === lang ? 'text-cyan-400 font-black bg-cyan-500/10' : ''}">
+                        <span>${esc(lang)}</span> ${selectedLanguage === lang ? '<i class="fa-solid fa-check text-[10px]"></i>' : ''}
+                      </div>
+                    `).join('')}
+                  </div>
+                ` : ''}
+              </div>
+            ` : ''}
+
+            <div class="relative">
+              <button onclick="window.toggleAspectMenu()" class="text-purple-400 font-bold text-[10px] bg-purple-500/10 border border-purple-500/30 px-2 py-1 rounded-lg flex items-center gap-1 transition shadow-sm" title="Aspect Ratio">
+                <i class="fa-solid fa-expand text-[9px]"></i> ${esc(currentAspectLabel)}
+              </button>
+
+              ${isAspectMenuOpen ? `
+                <div id="aspectMenuDropdown" class="absolute right-0 top-10 bg-[#121826] border border-white/15 rounded-xl shadow-2xl py-2 z-50 min-w-[140px] backdrop-blur-xl">
+                  <div class="px-3 py-1 text-[10px] font-bold text-slate-400 border-b border-white/10 mb-1">Aspect Ratio</div>
+                  <div onclick="window.setVideoAspect('contain', 'Default')" class="px-4 py-2 text-xs text-white hover:bg-purple-500/20 cursor-pointer transition flex items-center justify-between ${currentAspectFit === 'contain' ? 'text-purple-400 font-black bg-purple-500/10' : ''}">
+                    <span>Default (Fit)</span> ${currentAspectFit === 'contain' ? '<i class="fa-solid fa-check text-[10px]"></i>' : ''}
+                  </div>
+                  <div onclick="window.setVideoAspect('cover', 'Zoom / Fill')" class="px-4 py-2 text-xs text-white hover:bg-purple-500/20 cursor-pointer transition flex items-center justify-between ${currentAspectFit === 'cover' ? 'text-purple-400 font-black bg-purple-500/10' : ''}">
+                    <span>Zoom / Fill</span> ${currentAspectFit === 'cover' ? '<i class="fa-solid fa-check text-[10px]"></i>' : ''}
+                  </div>
+                  <div onclick="window.setVideoAspect('fill', 'Stretch')" class="px-4 py-2 text-xs text-white hover:bg-purple-500/20 cursor-pointer transition flex items-center justify-between ${currentAspectFit === 'fill' && !currentCustomAspect ? 'text-purple-400 font-black bg-purple-500/10' : ''}">
+                    <span>Stretch</span> ${currentAspectFit === 'fill' && !currentCustomAspect ? '<i class="fa-solid fa-check text-[10px]"></i>' : ''}
+                  </div>
+                  <div onclick="window.setCustomVideoAspect()" class="px-4 py-2 text-xs text-cyan-400 font-bold hover:bg-purple-500/20 cursor-pointer transition flex items-center justify-between border-t border-white/10 mt-1">
+                    <span>Custom Ratio...</span> <i class="fa-solid fa-sliders text-[9px]"></i>
+                  </div>
+                </div>
+              ` : ''}
+            </div>
+
+            ${availableQualitiesKeys.length > 0 ? `
+              <div class="relative">
+                <button id="selectedQualityLabel" onclick="window.toggleQualityMenu()" class="text-cyan-400 font-black text-[10px] bg-cyan-500/10 border border-cyan-500/30 px-2 py-1 rounded-lg flex items-center gap-1 transition shadow-sm">
+                  <i class="fa-solid fa-sliders text-[9px]"></i> ${esc(selectedQuality || availableQualitiesKeys[0])}
+                </button>
+
+                ${isQualityMenuOpen ? `
+                  <div id="qualityMenuDropdown" class="absolute right-0 top-10 bg-[#121826] border border-white/15 rounded-xl shadow-2xl py-2 z-50 min-w-[180px] max-w-[260px] backdrop-blur-xl">
+                    <div class="px-3 py-1 text-[10px] font-bold text-slate-400 border-b border-white/10 mb-1">Select Quality</div>
+                    ${availableQualitiesKeys.map(qKey => {
+                      const isSelected = (selectedQuality || '').toUpperCase() === qKey.toUpperCase();
+                      return `
+                        <div onclick="window.setPlayerQuality('${esc(qKey)}')" class="px-3 py-2 text-xs hover:bg-cyan-500/20 cursor-pointer transition border-b border-white/5 last:border-none ${isSelected ? 'bg-cyan-500/10' : ''}">
+                          <div class="flex items-center justify-between">
+                            <span class="${isSelected ? 'text-cyan-400 font-black' : 'text-white font-bold'}">${esc(qKey)}</span>
+                            ${isSelected ? '<i class="fa-solid fa-check text-[10px] text-cyan-400"></i>' : ''}
+                          </div>
+                        </div>
+                      `;
+                    }).join('')}
+                  </div>
+                ` : ''}
+              </div>
+            ` : ''}
+
+            <button onclick="window.toggleVideoFullscreen()" class="text-white bg-white/10 hover:bg-white/20 p-1.5 rounded-lg transition" title="Fullscreen">
+              <i class="fa-solid fa-expand text-xs"></i>
+            </button>
           </div>
         </div>
 
-        <div class="w-full bg-black aspect-video relative flex items-center justify-center">
+        <div class="w-full bg-black aspect-video relative flex items-center justify-center overflow-hidden">
           ${selectedEpisode.videoUrl ? `
-            <video id="mainVideoPlayer" src="${esc(selectedEpisode.videoUrl)}" controls autoplay playsinline onended="${selectedEpisode.type === 'series' ? 'window.playNextEpisode()' : ''}" class="w-full h-full object-contain"></video>
+            <video id="mainVideoPlayer" src="${esc(selectedEpisode.videoUrl)}" style="object-fit: ${esc(currentAspectFit)}; ${currentCustomAspect ? 'aspect-ratio: ' + currentCustomAspect + ';' : ''}" controls autoplay playsinline preload="auto" x-webkit-airplay="allow" ${selectedEpisode.type === 'series' ? 'onended="window.playNextEpisode()"' : ''} class="w-full h-full"></video>
           ` : `
             <div class="text-center p-4">
               <i class="fa-solid fa-triangle-exclamation text-amber-400 text-2xl mb-2"></i>
@@ -1526,7 +1803,7 @@ function render() {
           <div class="flex items-center justify-between mb-2">
             <h1 class="text-xl font-bold text-white">${esc(selectedEpisode.title)}</h1>
             ${selectedEpisode.type === 'series' ? `
-              <button onclick="window.playNextEpisode()" class="bg-cyan-500/25 hover:bg-cyan-500/35 text-cyan-400 border border-cyan-500/30 px-3 py-1 rounded-lg text-xs font-bold transition flex items-center gap-1">
+              <button onclick="window.playNextEpisode()" class="bg-cyan-500/20 hover:bg-cyan-500/30 text-cyan-400 border border-cyan-500/30 px-3 py-1 rounded-lg text-xs font-bold transition flex items-center gap-1">
                 Next Ep <i class="fa-solid fa-forward text-[10px]"></i>
               </button>
             ` : ''}
@@ -1535,7 +1812,8 @@ function render() {
           <div class="flex items-center gap-3 mb-3 text-xs flex-wrap">
             <span class="text-amber-400 font-bold flex items-center gap-1"><i class="fa-solid fa-star text-[10px]"></i> ${esc(selectedEpisode.rating)}</span>
             <span class="text-slate-300 font-bold">${esc(selectedEpisode.year)}</span>
-            ${selectedEpisode.type === 'series' ? `<span class="text-slate-400">Season ${esc(selectedEpisode.seasonName?.replace('season_', ''))} E${esc(selectedEpisode.episodeNumber)}</span>` : '<span class="text-slate-400">Movie</span>'}
+            ${selectedEpisode.type === 'series' ? `<span class="text-slate-400">Season ${esc(selectedEpisode.seasonName?.replace('season_', ''))} E ${esc(selectedEpisode.episodeNumber)}</span>` : '<span class="text-slate-400">Movie</span>'}
+            ${selectedLanguage ? `<span class="text-cyan-400 bg-cyan-500/10 px-2 py-0.5 rounded border border-cyan-500/20 font-bold">Lang: ${esc(selectedLanguage)}</span>` : ''}
           </div>
 
           <div class="flex items-center justify-between mb-4">
@@ -1546,10 +1824,10 @@ function render() {
               <button onclick="window.handleDownload('${esc(selectedEpisode.id)}', '${esc(selectedEpisode.type)}', '${esc(selectedEpisode.title)}', '${esc(selectedEpisode.posterUrl)}', '${esc(selectedEpisode.videoUrl)}')" class="bg-white/10 hover:bg-white/20 text-white px-3.5 py-1.5 rounded-full text-xs font-bold flex items-center gap-1.5 transition whitespace-nowrap">
                 <i class="fa-solid fa-download text-[10px]"></i> Download
               </button>
-              <button onclick="window.toggleSaveItem('${esc(selectedEpisode.id)}', '${esc(selectedEpisode.type)}', '${esc(selectedEpisode.title)}', '${esc(selectedEpisode.posterUrl)}')" class="${isSaved ? 'bg-cyan-500 text-black' : 'bg-white/10 text-white'} px-3.5 py-1.5 rounded-full text-xs font-bold flex items-center gap-1.5 transition whitespace-nowrap">
+              <button id="saveBtn" onclick="window.toggleSaveItem('${esc(selectedEpisode.id)}', '${esc(selectedEpisode.type)}', '${esc(selectedEpisode.title)}', '${esc(selectedEpisode.posterUrl)}')" class="${isSaved ? 'bg-cyan-500 text-black' : 'bg-white/10 text-white'} px-3.5 py-1.5 rounded-full text-xs font-bold flex items-center gap-1.5 transition whitespace-nowrap">
                 <i class="fa-solid ${isSaved ? 'fa-check' : 'fa-bookmark'} text-[10px]"></i> ${isSaved ? 'Saved' : 'Save'}
               </button>
-              <button onclick="window.toggleLikeItem('${esc(selectedEpisode.id)}', '${esc(selectedEpisode.type)}', '${esc(selectedEpisode.title)}', '${esc(selectedEpisode.posterUrl)}')" class="${isLiked ? 'bg-cyan-500 text-black' : 'bg-white/10 text-white'} px-3.5 py-1.5 rounded-full text-xs font-bold flex items-center gap-1.5 transition whitespace-nowrap">
+              <button id="likeBtn" onclick="window.toggleLikeItem('${esc(selectedEpisode.id)}', '${esc(selectedEpisode.type)}', '${esc(selectedEpisode.title)}', '${esc(selectedEpisode.posterUrl)}')" class="${isLiked ? 'bg-cyan-500 text-black' : 'bg-white/10 text-white'} px-3.5 py-1.5 rounded-full text-xs font-bold flex items-center gap-1.5 transition whitespace-nowrap">
                 <i class="fa-solid ${isLiked ? 'fa-check' : 'fa-heart'} text-[10px]"></i> ${isLiked ? 'Liked' : 'Like'}
               </button>
             </div>
@@ -1563,7 +1841,7 @@ function render() {
                 ${isWatchSeasonDropdownOpen ? `
                   <div class="absolute right-0 mt-1 bg-[#121826] border border-white/10 rounded-xl shadow-2xl py-1 z-50 min-w-[120px]">
                     ${Object.keys(seriesObj.seasons).map(sKey => `
-                      <div onclick="window.selectWatchSeason('${esc(sKey)}')" class="px-4 py-2 text-xs text-white hover:bg-white/10 cursor-pointer transition ${selectedEpisode.seasonName === sKey ? 'text-cyan-400 font-bold bg-white/5' : ''}">
+                      <div onclick="window.selectWatchSeason('${sKey}')" class="px-4 py-2 text-xs text-white hover:bg-white/10 cursor-pointer transition ${selectedEpisode.seasonName === sKey ? 'text-cyan-400 font-bold bg-white/5' : ''}">
                         ${esc(sKey)}
                       </div>
                     `).join('')}
@@ -1579,11 +1857,13 @@ function render() {
                 ${(() => {
                   let activeSeason = seriesObj.seasons[selectedEpisode.seasonName] || Object.values(seriesObj.seasons)[0];
                   if (!activeSeason || !activeSeason.episodes) return '<p class="text-xs text-slate-500">No episodes found</p>';
-                  return Object.entries(activeSeason.episodes).map(([epKey, ep], idx) => {
-                    let epTitle = ep.title || `Episode ${idx + 1}`;
+                  const epList = Array.isArray(activeSeason.episodes) 
+                    ? activeSeason.episodes.map((ep, i) => [String(i), ep])
+                    : Object.entries(activeSeason.episodes);
+                  return epList.map(([epKey, ep], idx) => {
                     let isCurrentEp = selectedEpisode.episodeNumber === (idx + 1);
                     return `
-                      <button onclick="window.playSpecificEpisode(${JSON.stringify(ep).replace(/"/g, '&quot;')}, '${esc(epTitle)}', '${esc(selectedEpisode.seasonName)}', ${idx + 1})" class="w-12 h-12 rounded-xl flex items-center justify-center font-bold text-xs transition flex-shrink-0 cursor-pointer ${isCurrentEp ? 'bg-cyan-500 text-black shadow-lg shadow-cyan-500/30' : 'bg-[#121826] text-white border border-white/10 hover:bg-white/10'}">
+                      <button onclick="window.playSpecificEpisodeByIndex('${esc(selectedEpisode.seasonName)}', ${idx + 1})" class="w-12 h-12 rounded-xl flex items-center justify-center font-bold text-xs transition flex-shrink-0 cursor-pointer ${isCurrentEp ? 'bg-cyan-500 text-black shadow-lg shadow-cyan-500/30' : 'bg-[#121826] text-white border border-white/10 hover:bg-white/10'}">
                         ${idx + 1 < 10 ? '0' + (idx + 1) : idx + 1}
                       </button>
                     `;
@@ -1609,6 +1889,26 @@ function render() {
         </div>
       </div>
     `;
+  }
+
+  if (currentPage === 'watch') {
+    const newVideo = document.getElementById("mainVideoPlayer");
+    if (newVideo) {
+      if (newVideo.src === existingVideo?.src && savedCurrentTime > 0) {
+        newVideo.currentTime = savedCurrentTime;
+        if (wasPlaying) {
+          newVideo.play().catch(() => {});
+        }
+      } else if (savedCurrentTime > 0) {
+        newVideo.currentTime = savedCurrentTime;
+        newVideo.onloadedmetadata = () => {
+          newVideo.currentTime = savedCurrentTime;
+          if (wasPlaying) {
+            newVideo.play().catch(() => {});
+          }
+        };
+      }
+    }
   }
 }
 render();
