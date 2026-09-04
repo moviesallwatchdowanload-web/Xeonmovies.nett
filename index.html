@@ -57,7 +57,6 @@ let currentMovieId = null, currentSeriesId = null, currentPlatformId = null;
 let heroIndex = 0, isInitialLoaded = false;
 let touchStartX = 0, touchEndX = 0;
 let autoSlideInterval = null;
-let detailAutoPlayTimer = null;
 let searchQuery = "";
 let selectedQuality = ""; 
 let selectedLanguage = ""; 
@@ -113,6 +112,31 @@ function getAnyUrl(obj) {
 function getTrailerUrl(obj) {
   if (!obj) return "";
   return obj.trailerUrl || obj.trailer || obj.previewUrl || obj.teaserUrl || getAnyUrl(obj);
+}
+
+function isYouTubeUrl(url) {
+  if (!url || typeof url !== 'string') return false;
+  return url.includes('youtube.com') || url.includes('youtu.be');
+}
+
+function getYouTubeEmbedUrl(url, autoplay = true, mute = false) {
+  if (!url) return "";
+  let videoId = "";
+  if (url.includes("youtube.com/watch?v=")) {
+    videoId = url.split("watch?v=")[1]?.split("&")[0];
+  } else if (url.includes("youtu.be/")) {
+    videoId = url.split("youtu.be/")[1]?.split("?")[0];
+  } else if (url.includes("youtube.com/embed/")) {
+    videoId = url.split("embed/")[1]?.split("?")[0];
+  } else if (url.includes("youtube.com/shorts/")) {
+    videoId = url.split("shorts/")[1]?.split("?")[0];
+  }
+  if (videoId) {
+    const muteParam = mute ? "1" : "0";
+    const autoParam = autoplay ? "1" : "0";
+    return `https://www.youtube-nocookie.com/embed/${videoId}?autoplay=${autoParam}&mute=${muteParam}&controls=0&loop=1&playlist=${videoId}&modestbranding=1&rel=0&enablejsapi=1`;
+  }
+  return url;
 }
 
 function getAvailableLanguages(targetNode) {
@@ -422,7 +446,6 @@ function startAutoSlide() {
 startAutoSlide();
 
 window.showPage = function(page) {
-  if (detailAutoPlayTimer) clearTimeout(detailAutoPlayTimer);
   currentPage = page; 
   isPlaybackSettingsOpen = false;
   isWatchSeasonDropdownOpen = false;
@@ -454,7 +477,6 @@ window.openPlatformPage = function(platformId) {
 window.setPlatformSubTab = function(sub) { platformSubTab = sub; render(); };
 
 window.goToSearchPage = function(query = "") {
-  if (detailAutoPlayTimer) clearTimeout(detailAutoPlayTimer);
   currentPage = "search";
   searchQuery = query;
   window.scrollTo(0, 0);
@@ -492,6 +514,9 @@ window.setPlayerQuality = function(quality) {
   showToast(`Switched to ${quality}`);
 
   const videoEl = document.getElementById("mainVideoPlayer");
+  const loaderEl = document.getElementById("videoLoaderOverlay");
+  if (loaderEl) loaderEl.classList.remove("hidden");
+
   if (videoEl && selectedEpisode.videoUrl) {
     const currentTime = videoEl.currentTime || 0;
     const isPlaying = !videoEl.paused;
@@ -499,6 +524,7 @@ window.setPlayerQuality = function(quality) {
     videoEl.src = selectedEpisode.videoUrl;
     videoEl.currentTime = currentTime;
     videoEl.onloadedmetadata = () => {
+      if (loaderEl) loaderEl.classList.add("hidden");
       videoEl.currentTime = currentTime;
       if (isPlaying) {
         videoEl.play().catch(() => {});
@@ -555,6 +581,9 @@ window.setPlayerLanguage = function(lang) {
     }
   }
 
+  const loaderEl = document.getElementById("videoLoaderOverlay");
+  if (loaderEl) loaderEl.classList.remove("hidden");
+
   const videoEl = document.getElementById("mainVideoPlayer");
   if (videoEl && selectedEpisode.videoUrl) {
     const currentTime = videoEl.currentTime || 0;
@@ -563,6 +592,7 @@ window.setPlayerLanguage = function(lang) {
     videoEl.src = selectedEpisode.videoUrl;
     videoEl.currentTime = currentTime;
     videoEl.onloadedmetadata = () => {
+      if (loaderEl) loaderEl.classList.add("hidden");
       videoEl.currentTime = currentTime;
       if (isPlaying) {
         videoEl.play().catch(() => {});
@@ -687,7 +717,6 @@ window.openBannerAction = function(bannerId, bannerTitle) {
 };
 
 window.openDetail = function(id, type) {
-  if (detailAutoPlayTimer) clearTimeout(detailAutoPlayTimer);
   isPlaybackSettingsOpen = false;
   isWatchSeasonDropdownOpen = false;
   isQualityMenuOpen = false;
@@ -717,36 +746,51 @@ window.openDetail = function(id, type) {
   currentPage = "detail";
   window.scrollTo(0, 0);
   render();
+};
 
-  detailAutoPlayTimer = setTimeout(() => {
-    const posterBox = document.getElementById("detailPosterBox");
-    const videoBox = document.getElementById("detailVideoBox");
-    const videoEl = document.getElementById("detailTrailerPlayer");
-    const soundBtn = document.getElementById("trailerSoundBtn");
-    const badgeEl = document.getElementById("trailerBadge");
+window.playDetailTrailer = function() {
+  const posterBox = document.getElementById("detailPosterBox");
+  const videoBox = document.getElementById("detailVideoBox");
+  const videoEl = document.getElementById("detailTrailerPlayer");
+  const soundBtn = document.getElementById("trailerSoundBtn");
+  const badgeEl = document.getElementById("trailerBadge");
+  const loaderEl = document.getElementById("detailVideoLoaderOverlay");
 
-    if (posterBox && videoBox && videoEl) {
-      posterBox.classList.add("hidden");
-      videoBox.classList.remove("hidden");
-      if (badgeEl) badgeEl.classList.remove("hidden");
-      
+  if (posterBox && videoBox && videoEl) {
+    posterBox.classList.add("opacity-0", "pointer-events-none");
+    videoBox.classList.remove("opacity-0");
+    if (badgeEl) badgeEl.classList.remove("opacity-0");
+    if (loaderEl) loaderEl.classList.remove("hidden");
+    
+    if (videoEl.tagName === 'VIDEO') {
       videoEl.muted = false;
       videoEl.play().then(() => {
+        if (loaderEl) loaderEl.classList.add("hidden");
         if (soundBtn) soundBtn.classList.add("hidden");
       }).catch(() => {
         videoEl.muted = true;
         videoEl.play().then(() => {
+          if (loaderEl) loaderEl.classList.add("hidden");
           if (soundBtn) soundBtn.classList.remove("hidden");
         }).catch(() => {});
       });
+    } else if (videoEl.tagName === 'IFRAME') {
+      const ytUrl = videoEl.getAttribute('data-yt-url');
+      if (ytUrl && !videoEl.src) {
+        videoEl.src = ytUrl;
+      }
+      setTimeout(() => {
+        if (loaderEl) loaderEl.classList.add("hidden");
+      }, 1500);
+      if (soundBtn) soundBtn.classList.add("hidden");
     }
-  }, 3000);
+  }
 };
 
 window.unmuteTrailer = function() {
   const videoEl = document.getElementById("detailTrailerPlayer");
   const soundBtn = document.getElementById("trailerSoundBtn");
-  if (videoEl) {
+  if (videoEl && videoEl.tagName === 'VIDEO') {
     videoEl.muted = false;
     videoEl.play().catch(() => {});
     if (soundBtn) soundBtn.classList.add("hidden");
@@ -895,7 +939,9 @@ window.playSpecificEpisodeByIndex = function(seasonName, epNum) {
   render();
   setTimeout(() => {
     const vPlayer = document.getElementById("mainVideoPlayer");
+    const loaderEl = document.getElementById("videoLoaderOverlay");
     if (vPlayer) {
+      if (loaderEl) loaderEl.classList.remove("hidden");
       vPlayer.play().catch(() => {
         vPlayer.muted = true;
         vPlayer.play().catch(() => {});
@@ -921,7 +967,6 @@ window.playNextEpisode = function() {
 };
 
 window.openWatchScreen = function(id, type, episodeNode = null, epTitle = "", seasonName = "Movie", episodeNumber = 1) {
-  if (detailAutoPlayTimer) clearTimeout(detailAutoPlayTimer);
   let mediaObj = findItemUniversal(id, type) || findItemUniversal(id, type === 'series' ? 'movie' : 'series');
   isPlaybackSettingsOpen = false;
   isWatchSeasonDropdownOpen = false;
@@ -1010,7 +1055,9 @@ window.openWatchScreen = function(id, type, episodeNode = null, epTitle = "", se
 
   setTimeout(() => {
     const vPlayer = document.getElementById("mainVideoPlayer");
+    const loaderEl = document.getElementById("videoLoaderOverlay");
     if (vPlayer) {
+      if (loaderEl) loaderEl.classList.remove("hidden");
       vPlayer.play().catch(() => {
         vPlayer.muted = true;
         vPlayer.play().catch(() => {});
@@ -1145,22 +1192,18 @@ function render() {
     
     appEl.innerHTML = `
       <div>
-        <div class="flex items-center justify-between px-3 py-3 bg-[#0b0f19]/90 sticky top-0 z-30 backdrop-blur-md border-b border-white/5 gap-2">
-          <div class="flex items-center gap-2 flex-shrink-0">
+        <!-- Top Header with Updated App APK Download Link -->
+        <div class="flex items-center justify-between px-4 py-3 bg-[#0b0f19]/90 sticky top-0 z-30 backdrop-blur-md border-b border-white/5">
+          <div class="flex items-center gap-2">
             <div class="w-8 h-8 rounded-xl bg-gradient-to-tr from-cyan-600 to-blue-500 flex items-center justify-center shadow-lg shadow-cyan-500/20">
               <i class="fa-solid fa-play text-white text-xs"></i>
             </div>
             <h1 class="text-sm font-black tracking-wider text-white">Xeon<span class="text-cyan-400">Movies</span></h1>
           </div>
-
-          <!-- UNDER DEVELOPMENT BUTTON -->
-          <div class="bg-[#121826] text-cyan-400 border border-cyan-500/30 px-2.5 py-1 rounded-full text-[9px] sm:text-[10px] font-bold tracking-wider whitespace-nowrap shadow-inner">
-            UNDER DEVELOPMENT...
-          </div>
-
-          <div class="flex items-center gap-2 flex-shrink-0">
-            <a href="https://moviesallwatchdowanload-web.github.io/Xeonmovies.apk-wala/" target="_blank" rel="noopener noreferrer" class="bg-[#121826] hover:bg-white/10 text-white border border-white/10 px-2.5 py-1.5 rounded-xl text-xs font-bold flex items-center gap-1.5 transition whitespace-nowrap">
-              <i class="fa-solid fa-download text-[10px] text-cyan-400"></i> <span>Download Official App</span>
+          <div class="flex items-center gap-2">
+            <a href="https://moviesallwatchdowanload-web.github.io/app-apk-download-/" target="_blank" rel="noopener" class="h-8 px-2.5 rounded-full bg-cyan-500/10 border border-cyan-500/30 flex items-center gap-1.5 text-cyan-400 hover:bg-cyan-500/20 transition text-[10px] font-bold shadow-sm">
+              <i class="fa-solid fa-cloud-arrow-down text-xs"></i>
+              <span>App APK</span>
             </a>
             <button onclick="window.goToSearchPage()" class="w-8 h-8 rounded-full bg-white/10 flex items-center justify-center text-white hover:bg-white/20 transition">
               <i class="fa-solid fa-magnifying-glass text-xs"></i>
@@ -1202,7 +1245,7 @@ function render() {
             </div>
           ` : ''}
 
-          <!-- Professional Famous Platforms Section -->
+          <!-- Famous Platforms Section -->
           <div class="mb-6">
             <h2 class="text-xs font-bold text-slate-400 tracking-wider mb-3">FAMOUS PLATFORMS</h2>
             <div class="flex gap-4 overflow-x-auto pb-2">
@@ -1257,20 +1300,37 @@ function render() {
     const platformObj = platforms[currentPlatformId] || {};
     const platformName = platformObj.name || platformObj.title || "Platform";
     const platformLogo = platformObj.logoUrl || platformObj.iconUrl || platformObj.imageUrl || '';
+    const isCrunchy = platformName.toLowerCase().includes('crunchy') || currentPlatformId.toLowerCase().includes('crunchy');
 
     const pMoviesObj = platformObj.movies || {};
     const pSeriesObj = platformObj.series || {};
     const pAnimeObj = platformObj.anime || {};
     const pAnimeSeriesObj = platformObj.anime_series || {};
 
-    const pMoviesList = Object.entries(pMoviesObj).map(([id, m]) => ({ id, type: 'movie', ...(m || {}) })).filter(m => !isAnimeItem(m));
-    const pSeriesList = Object.entries(pSeriesObj).map(([id, s]) => ({ id, type: 'series', ...(s || {}) })).filter(s => !isAnimeItem(s));
+    let pMoviesList = [
+      ...Object.entries(pMoviesObj).map(([id, m]) => ({ id, type: 'movie', ...(m || {}) })),
+      ...(isCrunchy ? Object.entries(pAnimeObj).map(([id, a]) => ({ id, type: 'movie', ...(a || {}) })) : [])
+    ];
+    let pSeriesList = [
+      ...Object.entries(pSeriesObj).map(([id, s]) => ({ id, type: 'series', ...(s || {}) })),
+      ...(isCrunchy ? Object.entries(pAnimeSeriesObj).map(([id, as]) => ({ id, type: 'series', ...(as || {}) })) : [])
+    ];
+
+    if (!isCrunchy) {
+      pMoviesList = pMoviesList.filter(m => !isAnimeItem(m));
+      pSeriesList = pSeriesList.filter(s => !isAnimeItem(s));
+    }
+
     const pAnimeList = [
       ...Object.entries(pMoviesObj).map(([id, m]) => ({ id, type: 'movie', ...(m || {}) })).filter(m => isAnimeItem(m)),
       ...Object.entries(pSeriesObj).map(([id, s]) => ({ id, type: 'series', ...(s || {}) })).filter(s => isAnimeItem(s)),
       ...Object.entries(pAnimeObj).map(([id, a]) => ({ id, type: 'movie', ...(a || {}) })),
       ...Object.entries(pAnimeSeriesObj).map(([id, a]) => ({ id, type: 'series', ...(a || {}) }))
     ];
+
+    if (isCrunchy && platformSubTab === 'Anime') {
+      platformSubTab = 'Movies';
+    }
 
     appEl.innerHTML = `
       <div class="p-4">
@@ -1298,9 +1358,11 @@ function render() {
           <button onclick="window.setPlatformSubTab('Series')" class="px-5 py-2 rounded-full text-xs font-bold transition whitespace-nowrap cursor-pointer ${platformSubTab === 'Series' ? 'bg-white text-black shadow-md' : 'bg-[#121826] text-slate-300 border border-white/10'}">
             Series
           </button>
-          <button onclick="window.setPlatformSubTab('Anime')" class="px-5 py-2 rounded-full text-xs font-bold transition whitespace-nowrap cursor-pointer ${platformSubTab === 'Anime' ? 'bg-white text-black shadow-md' : 'bg-[#121826] text-slate-300 border border-white/10'}">
-            Anime
-          </button>
+          ${!isCrunchy ? `
+            <button onclick="window.setPlatformSubTab('Anime')" class="px-5 py-2 rounded-full text-xs font-bold transition whitespace-nowrap cursor-pointer ${platformSubTab === 'Anime' ? 'bg-white text-black shadow-md' : 'bg-[#121826] text-slate-300 border border-white/10'}">
+              Anime
+            </button>
+          ` : ''}
         </div>
 
         ${platformSubTab === 'Movies' ? `
@@ -1468,6 +1530,8 @@ function render() {
     const allOtherItems = allItemsPool.filter(i => i.id !== item.id);
 
     const trailerUrl = getTrailerUrl(item);
+    const isYT = isYouTubeUrl(trailerUrl);
+    const ytEmbedUrl = isYT ? getYouTubeEmbedUrl(trailerUrl, true, false) : "";
 
     if (isSeries && item.seasons) {
       const sKeys = Object.keys(item.seasons);
@@ -1479,23 +1543,46 @@ function render() {
     appEl.innerHTML = `
       <div>
         <div class="relative w-full aspect-[16/9] bg-black overflow-hidden">
-          <div id="detailPosterBox" class="absolute inset-0 w-full h-full transition-opacity duration-500">
-            ${poster ? `<img src="${esc(poster)}" class="w-full h-full object-cover">` : ''}
-          </div>
-          <div id="detailVideoBox" class="absolute inset-0 w-full h-full hidden">
-            <video id="detailTrailerPlayer" src="${esc(trailerUrl)}" autoplay loop playsinline class="w-full h-full object-cover"></video>
+          <div id="detailVideoBox" class="absolute inset-0 w-full h-full opacity-0 pointer-events-none transition-opacity duration-700">
             
-            <div id="trailerBadge" class="absolute top-4 right-4 bg-cyan-500/90 text-black px-2.5 py-1 rounded-full text-[10px] font-black uppercase tracking-wider backdrop-blur-md shadow-lg flex items-center gap-1 hidden">
+            <!-- Trailer Loading Overlay -->
+            <div id="detailVideoLoaderOverlay" class="absolute inset-0 bg-black/90 z-20 flex flex-col items-center justify-center transition-opacity duration-300">
+              <div class="w-10 h-10 border-4 border-cyan-500 border-t-transparent rounded-full animate-spin mb-3"></div>
+              <p class="text-xs font-bold text-cyan-400 tracking-wider">Please wait...</p>
+            </div>
+
+            ${isYT ? `
+              <iframe id="detailTrailerPlayer" data-yt-url="${esc(ytEmbedUrl)}" src="" onload="document.getElementById('detailVideoLoaderOverlay')?.classList.add('hidden')" class="w-full h-full object-cover" frameborder="0" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture" allowfullscreen></iframe>
+            ` : `
+              <video id="detailTrailerPlayer" src="${esc(trailerUrl)}" loop muted playsinline preload="auto" 
+                     onloadeddata="document.getElementById('detailVideoLoaderOverlay')?.classList.add('hidden')"
+                     onplaying="document.getElementById('detailVideoLoaderOverlay')?.classList.add('hidden')"
+                     onwaiting="document.getElementById('detailVideoLoaderOverlay')?.classList.remove('hidden')"
+                     class="w-full h-full object-cover"></video>
+            `}
+            
+            <div id="trailerBadge" class="absolute top-4 right-4 bg-cyan-500/90 text-black px-2.5 py-1 rounded-full text-[10px] font-black uppercase tracking-wider backdrop-blur-md shadow-lg flex items-center gap-1 opacity-0 transition-opacity duration-500 z-30">
               <i class="fa-solid fa-film text-[9px]"></i> Trailer
             </div>
 
-            <button id="trailerSoundBtn" onclick="window.unmuteTrailer()" class="absolute bottom-4 right-4 bg-black/70 hover:bg-black text-white px-3 py-1.5 rounded-full text-xs font-bold backdrop-blur-md border border-white/20 flex items-center gap-1.5 shadow-xl transition">
-              <i class="fa-solid fa-volume-xmark text-xs text-amber-400"></i> Sound On
-            </button>
+            ${!isYT ? `
+              <button id="trailerSoundBtn" onclick="window.unmuteTrailer()" class="absolute bottom-4 right-4 bg-black/70 hover:bg-black text-white px-3 py-1.5 rounded-full text-xs font-bold backdrop-blur-md border border-white/20 flex items-center gap-1.5 shadow-xl transition z-30">
+                <i class="fa-solid fa-volume-xmark text-xs text-amber-400"></i> Sound On
+              </button>
+            ` : ''}
           </div>
 
-          <div class="absolute inset-0 bg-gradient-to-t from-[#0b0f19] via-black/20 to-transparent pointer-events-none"></div>
-          <button onclick="window.showPage('home')" class="absolute top-4 left-4 z-20 bg-black/60 text-white w-9 h-9 rounded-full flex items-center justify-center backdrop-blur-md">
+          <div id="detailPosterBox" class="absolute inset-0 w-full h-full transition-opacity duration-700 z-10 cursor-pointer group" onclick="window.playDetailTrailer()">
+            ${poster ? `<img src="${esc(poster)}" class="w-full h-full object-cover">` : ''}
+            <div class="absolute inset-0 bg-black/40 flex items-center justify-center group-hover:bg-black/30 transition">
+              <div class="w-14 h-14 rounded-full bg-cyan-500 text-black flex items-center justify-center shadow-2xl shadow-cyan-500/50 group-hover:scale-110 transition-transform">
+                <i class="fa-solid fa-play text-lg ml-0.5"></i>
+              </div>
+            </div>
+          </div>
+
+          <div class="absolute inset-0 bg-gradient-to-t from-[#0b0f19] via-black/20 to-transparent pointer-events-none z-20"></div>
+          <button onclick="window.showPage('home')" class="absolute top-4 left-4 z-30 bg-black/60 text-white w-9 h-9 rounded-full flex items-center justify-center backdrop-blur-md">
             <i class="fa-solid fa-arrow-left text-xs"></i>
           </button>
         </div>
@@ -1597,8 +1684,52 @@ function render() {
 
   } else if (currentPage === 'settings') {
     appEl.innerHTML = `
-      <div class="p-4 space-y-3">
-        <h1 class="text-base font-black mb-4">Profile & Settings</h1>
+      <div class="p-4 space-y-4">
+        <h1 class="text-lg font-black tracking-wide mb-2 flex items-center gap-2">
+          <i class="fa-solid fa-sliders text-cyan-400 text-sm"></i> Profile & Settings
+        </h1>
+
+        <!-- Download Official App Card with Updated URL -->
+        <div onclick="window.open('https://moviesallwatchdowanload-web.github.io/app-apk-download-/', '_blank')" class="relative overflow-hidden bg-gradient-to-r from-cyan-600/20 via-blue-600/20 to-purple-600/20 border border-cyan-500/40 p-4 rounded-2xl flex items-center justify-between cursor-pointer group shadow-xl hover:shadow-cyan-500/20 transition-all duration-300">
+          <div class="absolute -right-6 -bottom-6 w-24 h-24 bg-cyan-500/10 rounded-full blur-xl group-hover:scale-150 transition-transform"></div>
+          <div class="flex items-center gap-3.5 relative z-10">
+            <div class="w-11 h-11 rounded-xl bg-gradient-to-tr from-cyan-500 to-blue-600 flex items-center justify-center text-white shadow-lg shadow-cyan-500/30 group-hover:scale-110 transition-transform">
+              <i class="fa-solid fa-cloud-arrow-down text-base"></i>
+            </div>
+            <div>
+              <div class="flex items-center gap-2">
+                <span class="text-xs font-black text-white tracking-wider">Download Official App</span>
+                <span class="text-[9px] bg-cyan-500 text-black px-2 py-0.5 rounded-full font-extrabold uppercase">APK</span>
+              </div>
+              <p class="text-[11px] text-slate-300 mt-0.5">Get the latest official Android application</p>
+            </div>
+          </div>
+          <div class="w-8 h-8 rounded-full bg-white/10 flex items-center justify-center text-cyan-400 group-hover:bg-cyan-500 group-hover:text-black transition-all">
+            <i class="fa-solid fa-arrow-right text-xs"></i>
+          </div>
+        </div>
+
+        <!-- Under Development Card -->
+        <div onclick="showToast('This feature is currently under professional development!')" class="relative overflow-hidden bg-[#121826] border border-amber-500/30 p-4 rounded-2xl flex items-center justify-between cursor-pointer group hover:bg-amber-500/5 transition-all duration-300">
+          <div class="absolute -right-6 -bottom-6 w-24 h-24 bg-amber-500/10 rounded-full blur-xl group-hover:scale-150 transition-transform"></div>
+          <div class="flex items-center gap-3.5 relative z-10">
+            <div class="w-11 h-11 rounded-xl bg-gradient-to-tr from-amber-500 to-orange-600 flex items-center justify-center text-black font-black shadow-lg shadow-amber-500/30 group-hover:scale-110 transition-transform">
+              <i class="fa-solid fa-code text-base"></i>
+            </div>
+            <div>
+              <div class="flex items-center gap-2">
+                <span class="text-xs font-black text-white tracking-wider">Under Development</span>
+                <span class="text-[9px] bg-amber-500/20 text-amber-400 border border-amber-500/30 px-2 py-0.5 rounded-full font-extrabold uppercase animate-pulse">SOON</span>
+              </div>
+              <p class="text-[11px] text-slate-400 mt-0.5">Exciting new features coming up next</p>
+            </div>
+          </div>
+          <div class="w-8 h-8 rounded-full bg-white/5 flex items-center justify-center text-amber-400 group-hover:bg-amber-500 group-hover:text-black transition-all">
+            <i class="fa-solid fa-hammer text-xs"></i>
+          </div>
+        </div>
+
+        <div class="h-px bg-white/10 my-2"></div>
 
         <div onclick="window.showPage('downloads')" class="bg-[#121826] border border-white/5 p-4 rounded-2xl flex items-center justify-between cursor-pointer hover:bg-white/5 transition">
           <div class="flex items-center gap-3">
@@ -1762,74 +1893,59 @@ function render() {
               ` : ''}
             </div>
 
-            <!-- Dynamic Quality Selector Dropdown -->
+            <!-- Quality Selector -->
             ${availableQualitiesKeys.length > 0 ? `
               <div class="relative">
-                <button id="selectedQualityLabel" onclick="window.toggleQualityMenu()" class="text-cyan-400 font-black text-[10px] bg-cyan-500/10 border border-cyan-500/30 px-2 py-1 rounded-lg flex items-center gap-1 transition shadow-sm">
+                <button onclick="window.toggleQualityMenu()" id="selectedQualityLabel" class="text-cyan-400 font-bold text-[10px] bg-cyan-500/10 border border-cyan-500/30 px-2.5 py-1 rounded-lg flex items-center gap-1 transition">
                   <i class="fa-solid fa-sliders text-[9px]"></i> ${esc(selectedQuality || availableQualitiesKeys[0])}
                 </button>
 
                 ${isQualityMenuOpen ? `
-                  <div id="qualityMenuDropdown" class="absolute right-0 top-10 bg-[#121826] border border-white/15 rounded-xl shadow-2xl py-2 z-50 min-w-[180px] max-w-[260px] backdrop-blur-xl">
-                    <div class="px-3 py-1 text-[10px] font-bold text-slate-400 border-b border-white/10 mb-1">Select Quality</div>
-                    ${availableQualitiesKeys.map(qKey => {
-                      const isSelected = (selectedQuality || '').toUpperCase() === qKey.toUpperCase();
-                      return `
-                        <div onclick="window.setPlayerQuality('${esc(qKey)}')" class="px-3 py-2 text-xs hover:bg-cyan-500/20 cursor-pointer transition border-b border-white/5 last:border-none ${isSelected ? 'bg-cyan-500/10' : ''}">
-                          <div class="flex items-center justify-between">
-                            <span class="${isSelected ? 'text-cyan-400 font-black' : 'text-white font-bold'}">${esc(qKey)}</span>
-                            ${isSelected ? '<i class="fa-solid fa-check text-[10px] text-cyan-400"></i>' : ''}
-                          </div>
-                        </div>
-                      `;
-                    }).join('')}
+                  <div id="qualityMenuDropdown" class="absolute right-0 top-10 bg-[#121826] border border-white/15 rounded-xl shadow-2xl py-2 z-50 min-w-[120px] backdrop-blur-xl">
+                    <div class="px-3 py-1 text-[10px] font-bold text-slate-400 border-b border-white/10 mb-1">Quality</div>
+                    ${availableQualitiesKeys.map(q => `
+                      <div onclick="window.setPlayerQuality('${esc(q)}')" class="px-4 py-2 text-xs text-white hover:bg-cyan-500/20 cursor-pointer transition flex items-center justify-between ${selectedQuality === q ? 'text-cyan-400 font-black bg-cyan-500/10' : ''}">
+                        <span>${esc(q)}</span> ${selectedQuality === q ? '<i class="fa-solid fa-check text-[10px]"></i>' : ''}
+                      </div>
+                    `).join('')}
                   </div>
                 ` : ''}
               </div>
             ` : ''}
 
-            <button onclick="window.toggleVideoFullscreen()" class="text-white bg-white/10 hover:bg-white/20 p-1.5 rounded-lg transition" title="Fullscreen">
-              <i class="fa-solid fa-expand text-xs"></i>
-            </button>
           </div>
         </div>
 
-        <div class="w-full bg-black aspect-video relative flex items-center justify-center overflow-hidden">
-          ${selectedEpisode.videoUrl ? `
-            <video id="mainVideoPlayer" src="${esc(selectedEpisode.videoUrl)}" style="object-fit: ${esc(currentAspectFit)}; ${currentCustomAspect ? 'aspect-ratio: ' + currentCustomAspect + ';' : ''}" controls autoplay playsinline preload="auto" x-webkit-airplay="allow" ${selectedEpisode.type === 'series' ? 'onended="window.playNextEpisode()"' : ''} class="w-full h-full"></video>
-          ` : `
-            <div class="text-center p-4">
-              <i class="fa-solid fa-triangle-exclamation text-amber-400 text-2xl mb-2"></i>
-              <p class="text-xs text-slate-300">Video source link not found in database for selected quality/language!</p>
+        <!-- Video Player Element -->
+        <div class="relative w-full aspect-[16/9] bg-black overflow-hidden flex items-center justify-center">
+          <div id="videoLoaderOverlay" class="absolute inset-0 bg-black/80 z-20 flex flex-col items-center justify-center transition-opacity duration-300">
+            <div class="w-10 h-10 border-4 border-cyan-500 border-t-transparent rounded-full animate-spin mb-2"></div>
+            <p class="text-xs font-bold text-cyan-400">Loading stream...</p>
+          </div>
+
+          <video id="mainVideoPlayer" src="${esc(selectedEpisode.videoUrl)}" autoplay controls playsinline 
+                 style="object-fit: ${esc(currentAspectFit)}; ${currentCustomAspect ? 'aspect-ratio: ' + currentCustomAspect + ';' : ''}"
+                 onwaiting="document.getElementById('videoLoaderOverlay')?.classList.remove('hidden')"
+                 onplaying="document.getElementById('videoLoaderOverlay')?.classList.add('hidden')"
+                 onloadeddata="document.getElementById('videoLoaderOverlay')?.classList.add('hidden')"
+                 onended="window.playNextEpisode()"
+                 class="w-full h-full"></video>
+        </div>
+
+        <div class="p-4 pb-28">
+          <div class="flex items-center justify-between mb-3">
+            <div>
+              <h1 class="text-base font-black text-white mb-1">${esc(selectedEpisode.title)}</h1>
+              <div class="flex items-center gap-2">
+                <span class="text-[11px] text-amber-400 font-bold"><i class="fa-solid fa-star text-[10px]"></i> ${esc(selectedEpisode.rating || '6.5')}</span>
+                <span class="text-[11px] text-slate-400">•</span>
+                <span class="text-[11px] text-slate-400">${esc(selectedEpisode.year || '2019')}</span>
+                <span class="text-[11px] text-slate-400">•</span>
+                <span class="text-[11px] text-cyan-400 font-semibold uppercase">${esc(selectedEpisode.type)}</span>
+              </div>
             </div>
-          `}
-        </div>
 
-        <div class="p-4 relative">
-          <div class="flex items-center justify-between mb-2">
-            <h1 class="text-xl font-bold text-white">${esc(selectedEpisode.title)}</h1>
-            ${selectedEpisode.type === 'series' ? `
-              <button onclick="window.playNextEpisode()" class="bg-cyan-500/20 hover:bg-cyan-500/30 text-cyan-400 border border-cyan-500/30 px-3 py-1 rounded-lg text-xs font-bold transition flex items-center gap-1">
-                Next Ep <i class="fa-solid fa-forward text-[10px]"></i>
-              </button>
-            ` : ''}
-          </div>
-          
-          <div class="flex items-center gap-3 mb-3 text-xs flex-wrap">
-            <span class="text-amber-400 font-bold flex items-center gap-1"><i class="fa-solid fa-star text-[10px]"></i> ${esc(selectedEpisode.rating)}</span>
-            <span class="text-slate-300 font-bold">${esc(selectedEpisode.year)}</span>
-            ${selectedEpisode.type === 'series' ? `<span class="text-slate-400">Season ${esc(selectedEpisode.seasonName?.replace('season_', ''))} E ${esc(selectedEpisode.episodeNumber)}</span>` : '<span class="text-slate-400">Movie</span>'}
-            ${selectedLanguage ? `<span class="text-cyan-400 bg-cyan-500/10 px-2 py-0.5 rounded border border-cyan-500/20 font-bold">Lang: ${esc(selectedLanguage)}</span>` : ''}
-          </div>
-
-          <div class="flex items-center justify-between mb-4">
-            <div class="flex items-center gap-2 overflow-x-auto pb-1">
-              <button onclick="if(navigator.share) { navigator.share({title: '${esc(selectedEpisode.title)}', url: window.location.href}); } else { showToast('Link copied!'); }" class="bg-white/10 hover:bg-white/20 text-white px-3.5 py-1.5 rounded-full text-xs font-bold flex items-center gap-1.5 transition whitespace-nowrap">
-                <i class="fa-solid fa-share-nodes text-[10px]"></i> Share
-              </button>
-              <button onclick="window.handleDownload('${esc(selectedEpisode.id)}', '${esc(selectedEpisode.type)}', '${esc(selectedEpisode.title)}', '${esc(selectedEpisode.posterUrl)}', '${esc(selectedEpisode.videoUrl)}')" class="bg-white/10 hover:bg-white/20 text-white px-3.5 py-1.5 rounded-full text-xs font-bold flex items-center gap-1.5 transition whitespace-nowrap">
-                <i class="fa-solid fa-download text-[10px]"></i> Download
-              </button>
+            <div class="flex items-center gap-2">
               <button id="saveBtn" onclick="window.toggleSaveItem('${esc(selectedEpisode.id)}', '${esc(selectedEpisode.type)}', '${esc(selectedEpisode.title)}', '${esc(selectedEpisode.posterUrl)}')" class="${isSaved ? 'bg-cyan-500 text-black' : 'bg-white/10 text-white'} px-3.5 py-1.5 rounded-full text-xs font-bold flex items-center gap-1.5 transition whitespace-nowrap">
                 <i class="fa-solid ${isSaved ? 'fa-check' : 'fa-bookmark'} text-[10px]"></i> ${isSaved ? 'Saved' : 'Save'}
               </button>
@@ -1837,41 +1953,53 @@ function render() {
                 <i class="fa-solid ${isLiked ? 'fa-check' : 'fa-heart'} text-[10px]"></i> ${isLiked ? 'Liked' : 'Like'}
               </button>
             </div>
-
-            ${selectedEpisode.type === 'series' && seriesObj && seriesObj.seasons ? `
-              <div class="relative">
-                <button onclick="window.toggleWatchSeasonDropdown()" class="bg-[#121826] border border-white/10 hover:bg-white/10 text-cyan-400 px-3 py-1.5 rounded-full text-xs font-bold flex items-center gap-1.5 transition whitespace-nowrap">
-                  <span>${esc(selectedEpisode.seasonName || 'Season 1')}</span>
-                  <i class="fa-solid fa-chevron-down text-[10px]"></i>
-                </button>
-                ${isWatchSeasonDropdownOpen ? `
-                  <div class="absolute right-0 mt-1 bg-[#121826] border border-white/10 rounded-xl shadow-2xl py-1 z-50 min-w-[120px]">
-                    ${Object.keys(seriesObj.seasons).map(sKey => `
-                      <div onclick="window.selectWatchSeason('${sKey}')" class="px-4 py-2 text-xs text-white hover:bg-white/10 cursor-pointer transition ${selectedEpisode.seasonName === sKey ? 'text-cyan-400 font-bold bg-white/5' : ''}">
-                        ${esc(sKey)}
-                      </div>
-                    `).join('')}
-                  </div>
-                ` : ''}
-              </div>
-            ` : ''}
           </div>
 
+          <!-- Series Seasons & Episodes Selector -->
           ${selectedEpisode.type === 'series' && seriesObj && seriesObj.seasons ? `
-            <div class="mb-4">
-              <div class="flex gap-2 overflow-x-auto pb-2">
+            <div class="mt-5 bg-[#121826] border border-white/5 rounded-2xl p-4">
+              <div class="flex items-center justify-between mb-3">
+                <h3 class="text-xs font-black text-cyan-400 tracking-wider">SEASONS & EPISODES</h3>
+                
+                <div class="relative">
+                  <button onclick="window.toggleWatchSeasonDropdown()" class="bg-white/10 text-white px-3 py-1.5 rounded-xl text-xs font-bold flex items-center gap-2 transition hover:bg-white/20">
+                    <span>${esc(selectedEpisode.seasonName)}</span>
+                    <i class="fa-solid fa-chevron-down text-[10px]"></i>
+                  </button>
+
+                  ${isWatchSeasonDropdownOpen ? `
+                    <div class="absolute right-0 top-10 bg-[#121826] border border-white/15 rounded-xl shadow-2xl py-2 z-50 min-w-[130px] backdrop-blur-xl">
+                      ${Object.keys(seriesObj.seasons).map(sKey => `
+                        <div onclick="window.selectWatchSeason('${esc(sKey)}')" class="px-4 py-2 text-xs text-white hover:bg-cyan-500/20 cursor-pointer transition flex items-center justify-between ${selectedEpisode.seasonName === sKey ? 'text-cyan-400 font-black bg-cyan-500/10' : ''}">
+                          <span>${esc(sKey)}</span> ${selectedEpisode.seasonName === sKey ? '<i class="fa-solid fa-check text-[10px]"></i>' : ''}
+                        </div>
+                      `).join('')}
+                    </div>
+                  ` : ''}
+                </div>
+              </div>
+
+              <div class="space-y-2 max-h-60 overflow-y-auto pr-1">
                 ${(() => {
-                  let activeSeason = seriesObj.seasons[selectedEpisode.seasonName] || Object.values(seriesObj.seasons)[0];
-                  if (!activeSeason || !activeSeason.episodes) return '<p class="text-xs text-slate-500">No episodes found</p>';
+                  const activeSeason = seriesObj.seasons[selectedEpisode.seasonName];
+                  if (!activeSeason || !activeSeason.episodes) return '<p class="text-xs text-slate-500">No episodes available.</p>';
                   const epList = Array.isArray(activeSeason.episodes) 
                     ? activeSeason.episodes.map((ep, i) => [String(i), ep])
                     : Object.entries(activeSeason.episodes);
                   return epList.map(([epKey, ep], idx) => {
-                    let isCurrentEp = selectedEpisode.episodeNumber === (idx + 1);
+                    const epNum = idx + 1;
+                    const epTitle = ep.title || `Episode ${epNum}`;
+                    const isCurrentEp = selectedEpisode.episodeNumber === epNum;
                     return `
-                      <button onclick="window.playSpecificEpisodeByIndex('${esc(selectedEpisode.seasonName)}', ${idx + 1})" class="w-12 h-12 rounded-xl flex items-center justify-center font-bold text-xs transition flex-shrink-0 cursor-pointer ${isCurrentEp ? 'bg-cyan-500 text-black shadow-lg shadow-cyan-500/30' : 'bg-[#121826] text-white border border-white/10 hover:bg-white/10'}">
-                        ${idx + 1 < 10 ? '0' + (idx + 1) : idx + 1}
-                      </button>
+                      <div onclick="window.playSpecificEpisodeByIndex('${esc(selectedEpisode.seasonName)}', ${epNum})" class="p-2.5 rounded-xl border flex items-center justify-between cursor-pointer transition ${isCurrentEp ? 'bg-cyan-500/10 border-cyan-500/40 text-cyan-400' : 'bg-slate-900/50 border-white/5 text-slate-300 hover:bg-white/5'}">
+                        <div class="flex items-center gap-2.5">
+                          <div class="w-7 h-7 rounded-lg ${isCurrentEp ? 'bg-cyan-500 text-black' : 'bg-white/10 text-white'} flex items-center justify-center font-black text-xs">
+                            ${epNum}
+                          </div>
+                          <span class="text-xs font-bold truncate max-w-[180px]">${esc(epTitle)}</span>
+                        </div>
+                        <span class="text-[10px] font-bold ${isCurrentEp ? 'text-cyan-400' : 'text-slate-400'}">${isCurrentEp ? 'Playing' : 'Play'}</span>
+                      </div>
                     `;
                   }).join('');
                 })()}
@@ -1879,10 +2007,11 @@ function render() {
             </div>
           ` : ''}
 
+          <!-- Recommendations -->
           <div class="mt-6">
-            <h2 class="text-xs font-bold text-cyan-400 tracking-wider mb-3 flex items-center gap-1.5">
+            <h3 class="text-xs font-bold text-cyan-400 tracking-wider mb-3 flex items-center gap-1.5">
               <i class="fa-solid fa-fire text-xs"></i> You May Also Like
-            </h2>
+            </h3>
             <div class="grid grid-cols-2 gap-3">
               ${allOtherItems.length > 0 ? allOtherItems.slice(0, 4).map(oth => `
                 <div onclick="window.openDetail('${esc(oth.id)}', '${esc(oth.type || 'movie')}');" class="bg-slate-900 rounded-xl p-2 cursor-pointer border border-white/5">
@@ -1896,28 +2025,7 @@ function render() {
       </div>
     `;
   }
-
-  if (currentPage === 'watch') {
-    const newVideo = document.getElementById("mainVideoPlayer");
-    if (newVideo) {
-      if (newVideo.src === existingVideo?.src && savedCurrentTime > 0) {
-        newVideo.currentTime = savedCurrentTime;
-        if (wasPlaying) {
-          newVideo.play().catch(() => {});
-        }
-      } else if (savedCurrentTime > 0) {
-        newVideo.currentTime = savedCurrentTime;
-        newVideo.onloadedmetadata = () => {
-          newVideo.currentTime = savedCurrentTime;
-          if (wasPlaying) {
-            newVideo.play().catch(() => {});
-          }
-        };
-      }
-    }
-  }
 }
-render();
 </script>
 </body>
 </html>
